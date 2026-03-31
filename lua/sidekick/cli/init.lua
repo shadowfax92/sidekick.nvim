@@ -172,8 +172,14 @@ function M.send(opts)
   opts = type(opts) == "string" and { msg = opts } or opts
   opts = filter_opts(opts)
 
-  if not opts.msg and not opts.prompt and Util.visual_mode() then
-    opts.msg = "{selection}"
+  local mode = vim.api.nvim_get_mode().mode
+  local is_visual = mode == "v" or mode == "V" or mode == "\22"
+  if is_visual then
+    if not opts.msg and not opts.prompt then
+      opts.msg = "{selection}"
+    elseif opts.msg == "{line}" then
+      opts.msg = "{selection}"
+    end
   end
 
   local msg, text = "", opts.text ---@type string?, sidekick.Text[]?
