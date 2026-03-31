@@ -211,6 +211,69 @@ function M.send(opts)
   })
 end
 
+--- Send context with a multiline comment popup
+---@param opts? sidekick.cli.Send
+---@overload fun(msg:string)
+function M.send_with_comment(opts)
+  opts = type(opts) == "string" and { msg = opts } or opts or {}
+  opts = filter_opts(opts)
+
+  local mode = vim.api.nvim_get_mode().mode
+  local is_visual = mode == "v" or mode == "V" or mode == "\22"
+  if is_visual then
+    if not opts.msg and not opts.prompt then
+      opts.msg = "{selection}"
+    elseif opts.msg == "{line}" then
+      opts.msg = "{selection}"
+    end
+  end
+
+  -- capture context before popup (visual mode will be lost)
+  local msg, text = "", opts.text ---@type string?, sidekick.Text[]?
+  if not text then
+    msg, text = M.render(opts)
+    if msg == "" or not text then
+      Util.warn("Nothing to send.")
+      return
+    elseif msg == "\n" then
+      msg = ""
+      text = {}
+    end
+  end
+
+  Util.exit_visual_mode()
+
+  local context_lines = msg ~= "" and vim.split(msg, "\n", { plain = true }) or {}
+
+  require("sidekick.cli.ui.comment").open({
+    context_lines = context_lines,
+    cb = function(comment)
+      if not comment then
+        return
+      end
+      local Text = require("sidekick.text")
+      local combined = Text.to_text(comment)
+      table.insert(combined, { { "" } })
+      vim.list_extend(combined, text)
+
+      State.with(function(state)
+        vim.schedule(function()
+          local formatted = state.tool:format(combined)
+          state.session:send(formatted .. "\n")
+          if opts.submit then
+            state.session:submit()
+          end
+        end)
+      end, {
+        attach = true,
+        filter = opts.filter,
+        focus = opts.focus,
+        show = true,
+      })
+    end,
+  })
+end
+
 ---@deprecated use `require("sidekick.cli").prompt()`
 function M.select_prompt(...)
   Util.deprecate('require("sidekick.cli").select_prompt()', 'require("sidekick.cli").prompt()')
