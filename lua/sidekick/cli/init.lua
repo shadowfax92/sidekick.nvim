@@ -49,9 +49,9 @@ local function resolve_visual_msg(opts)
   local is_visual = mode == "v" or mode == "V" or mode == "\22"
   if is_visual then
     if not opts.msg and not opts.prompt then
-      opts.msg = "{line}\n{selection}"
+      opts.msg = "{line}\n```\n{selection}\n```"
     elseif opts.msg == "{line}" then
-      opts.msg = "{line}\n{selection}"
+      opts.msg = "{line}\n```\n{selection}\n```"
     end
   end
 end
@@ -248,7 +248,9 @@ function M.send_with_comment(opts)
         return
       end
       local Text = require("sidekick.text")
-      local combined = Text.to_text(comment)
+      -- prefix each comment line with > (blockquote)
+      local quoted = comment:gsub("([^\n]+)", "> %1")
+      local combined = Text.to_text(quoted)
       table.insert(combined, { { "" } })
       vim.list_extend(combined, text)
 
