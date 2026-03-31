@@ -35,7 +35,7 @@ function M.open(opts)
     width = 0.6,
     height = math.min(20, edit_start + 5),
     border = "rounded",
-    title = " Comment ",
+    title = " Comment  <Esc> then <CR> to send | q to cancel ",
     title_pos = "center",
     backdrop = 60,
     wo = {
@@ -81,8 +81,8 @@ function M.open(opts)
     vim.cmd.startinsert()
   end
 
-  -- submit: <C-s> in insert/normal mode
-  vim.keymap.set({ "n", "i" }, "<C-s>", function()
+  -- submit: <CR> in normal mode (type comment, <Esc>, then <CR> to send)
+  vim.keymap.set("n", "<CR>", function()
     if not vim.api.nvim_buf_is_valid(win.buf) then
       return
     end
