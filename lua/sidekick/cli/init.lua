@@ -42,16 +42,16 @@ local M = {}
 ---@field [2] string|sidekick.cli.Action
 ---@field mode? string|string[]
 
---- Upgrade msg to {selection} when in visual mode
+--- Upgrade msg to {line} + {selection} when in visual mode
 ---@param opts {msg?:string, prompt?:string}
 local function resolve_visual_msg(opts)
   local mode = vim.api.nvim_get_mode().mode
   local is_visual = mode == "v" or mode == "V" or mode == "\22"
   if is_visual then
     if not opts.msg and not opts.prompt then
-      opts.msg = "{selection}"
+      opts.msg = "{line}\n{selection}"
     elseif opts.msg == "{line}" then
-      opts.msg = "{selection}"
+      opts.msg = "{line}\n{selection}"
     end
   end
 end
