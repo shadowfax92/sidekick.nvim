@@ -100,6 +100,9 @@ function M.format(state, picker)
     backends[#backends + 1] = state.session.mux_backend or state.session.backend
     if state.external then
       backends[#backends + 1] = state.session.mux_session
+      if state.session.tmux_window_index and state.session.tmux_pane_index then
+        backends[#backends + 1] = state.session.tmux_window_index .. "." .. state.session.tmux_pane_index
+      end
     end
     local backend = ("[%s]"):format(table.concat(backends, ":"))
 
