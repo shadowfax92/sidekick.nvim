@@ -156,6 +156,17 @@ function M.with(cb, opts)
   local filter_attached = Util.merge(opts.filter, { attached = true })
   local attached = M.get(filter_attached)
 
+  if #attached == 0 and opts.attach and Config.cli.mux.auto_attach ~= false then
+    local candidates = M.get(opts.filter)
+    local started = vim.tbl_filter(function(t)
+      return t.started
+    end, candidates)
+    if #started == 1 then
+      use(started[1])
+      return
+    end
+  end
+
   if #attached == 0 and opts.attach then
     require("sidekick.cli.ui.select").select({
       auto = true,
