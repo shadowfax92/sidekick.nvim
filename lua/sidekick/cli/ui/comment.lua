@@ -47,7 +47,7 @@ function M.open(opts)
       signcolumn = "no",
     },
     bo = {
-      buftype = "",
+      buftype = "nofile",
       filetype = "markdown",
       modifiable = true,
     },
