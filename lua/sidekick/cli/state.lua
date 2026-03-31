@@ -162,6 +162,7 @@ function M.with(cb, opts)
       return t.started
     end, candidates)
     if #started == 1 then
+      Util.info(("Auto-attached to `%s`"):format(started[1].tool.name))
       use(started[1])
       return
     end
