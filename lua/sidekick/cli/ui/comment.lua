@@ -1,5 +1,3 @@
-local Util = require("sidekick.util")
-
 local M = {}
 
 ---@class sidekick.cli.CommentOpts
@@ -85,6 +83,9 @@ function M.open(opts)
 
   -- submit: <C-s> in insert/normal mode
   vim.keymap.set({ "n", "i" }, "<C-s>", function()
+    if not vim.api.nvim_buf_is_valid(win.buf) then
+      return
+    end
     local all = vim.api.nvim_buf_get_lines(win.buf, 0, -1, false)
     -- extract only user-written lines (after the context + separator)
     local comment_lines = vim.list_slice(all, edit_start)

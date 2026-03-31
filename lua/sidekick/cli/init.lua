@@ -42,6 +42,20 @@ local M = {}
 ---@field [2] string|sidekick.cli.Action
 ---@field mode? string|string[]
 
+--- Upgrade msg to {selection} when in visual mode
+---@param opts {msg?:string, prompt?:string}
+local function resolve_visual_msg(opts)
+  local mode = vim.api.nvim_get_mode().mode
+  local is_visual = mode == "v" or mode == "V" or mode == "\22"
+  if is_visual then
+    if not opts.msg and not opts.prompt then
+      opts.msg = "{selection}"
+    elseif opts.msg == "{line}" then
+      opts.msg = "{selection}"
+    end
+  end
+end
+
 ---@generic T: {name?:string, filter?:sidekick.cli.Filter}
 ---@param opts? T|string
 ---@return T
@@ -171,16 +185,7 @@ end
 function M.send(opts)
   opts = type(opts) == "string" and { msg = opts } or opts
   opts = filter_opts(opts)
-
-  local mode = vim.api.nvim_get_mode().mode
-  local is_visual = mode == "v" or mode == "V" or mode == "\22"
-  if is_visual then
-    if not opts.msg and not opts.prompt then
-      opts.msg = "{selection}"
-    elseif opts.msg == "{line}" then
-      opts.msg = "{selection}"
-    end
-  end
+  resolve_visual_msg(opts)
 
   local msg, text = "", opts.text ---@type string?, sidekick.Text[]?
   if not text then
@@ -217,16 +222,7 @@ end
 function M.send_with_comment(opts)
   opts = type(opts) == "string" and { msg = opts } or opts or {}
   opts = filter_opts(opts)
-
-  local mode = vim.api.nvim_get_mode().mode
-  local is_visual = mode == "v" or mode == "V" or mode == "\22"
-  if is_visual then
-    if not opts.msg and not opts.prompt then
-      opts.msg = "{selection}"
-    elseif opts.msg == "{line}" then
-      opts.msg = "{selection}"
-    end
-  end
+  resolve_visual_msg(opts)
 
   -- capture context before popup (visual mode will be lost)
   local msg, text = "", opts.text ---@type string?, sidekick.Text[]?
