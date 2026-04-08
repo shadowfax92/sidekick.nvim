@@ -32,6 +32,16 @@ When sending a visual selection, the message now includes the file path and line
 
 This applies to both `send()` and `send_with_comment()` when triggered from visual mode.
 
+### Absolute Path Context Placeholders
+
+New context placeholders that resolve to the absolute file path instead of the cwd-relative one:
+
+- `{file_abs}` — absolute file path
+- `{line_abs}` — absolute file path with line number(s)
+- `{position_abs}` — absolute file path with line:col
+
+Useful when the AI tool is running outside the project's cwd (e.g., an attached tmux session in a different directory). Visual-mode auto-upgrade also applies: `msg = "{line_abs}"` in visual mode becomes `{line_abs}` + fenced `{selection}`.
+
 ### Better Tmux Pane Identification
 
 The session picker now shows `window_index.pane_index` for external tmux sessions, matching standard tmux addressing:
@@ -82,6 +92,7 @@ cli = {
     { "<leader>av", function() require("sidekick.cli").send({ msg = "{line}", filter = { name = "claude", cwd = true }, focus = false }) end, mode = { "n", "v" }, desc = "Send to Claude" },
     { "<leader>ax", function() require("sidekick.cli").send({ msg = "{line}", filter = { name = "codex", cwd = true }, focus = false }) end, mode = { "n", "v" }, desc = "Send to Codex" },
     { "<leader>ai", function() require("sidekick.cli").send_with_comment({ msg = "{line}" }) end, mode = { "n", "v" }, desc = "Send with Comment" },
+    { "<leader>aI", function() require("sidekick.cli").send_with_comment({ msg = "{line_abs}" }) end, mode = { "n", "v" }, desc = "Send with Comment (abs path)" },
     { "<leader>aa", function() require("sidekick.cli").toggle({ focus = true }) end, mode = { "n", "v" }, desc = "Toggle CLI" },
     { "<leader>ac", function() require("sidekick.cli").toggle({ name = "claude", focus = true }) end, desc = "Toggle Claude" },
     { "<leader>as", function() require("sidekick.cli").select() end, desc = "Select CLI" },

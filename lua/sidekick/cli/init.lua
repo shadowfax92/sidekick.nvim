@@ -52,6 +52,8 @@ local function resolve_visual_msg(opts)
       opts.msg = "{line}\n```\n{selection}\n```"
     elseif opts.msg == "{line}" then
       opts.msg = "{line}\n```\n{selection}\n```"
+    elseif opts.msg == "{line_abs}" then
+      opts.msg = "{line_abs}\n```\n{selection}\n```"
     end
   end
 end

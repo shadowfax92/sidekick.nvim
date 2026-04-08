@@ -10,6 +10,7 @@ local M = {}
 
 ---@class sidekick.context.loc.Opts
 ---@field kind? "file"|"line"|"position"
+---@field absolute? boolean
 
 ---@param ctx sidekick.context.Loc|sidekick.context.ctx
 ---@param opts? sidekick.context.loc.Opts
@@ -22,6 +23,8 @@ function M.get(ctx, opts)
   local name = ctx.name or vim.api.nvim_buf_get_name(ctx.buf)
   if not name or name == "" then
     name = "[No Name]"
+  elseif opts.absolute then
+    name = vim.fs.normalize(name)
   else
     local cwd = ctx.cwd or vim.fn.getcwd(0)
     local ok, rel = pcall(vim.fs.relpath, cwd, name)

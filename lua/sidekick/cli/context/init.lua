@@ -19,6 +19,15 @@ M.context = {
   line = function(ctx)
     return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "line" })
   end,
+  position_abs = function(ctx)
+    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "position", absolute = true })
+  end,
+  file_abs = function(ctx)
+    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "file", absolute = true })
+  end,
+  line_abs = function(ctx)
+    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "line", absolute = true })
+  end,
   this = function()
     -- this is not actually used.
     -- `{this}` is special, see the C:render function for more details
