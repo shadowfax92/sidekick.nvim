@@ -101,7 +101,9 @@ function M.format(state, picker)
     if state.external then
       backends[#backends + 1] = state.session.mux_session
       if state.session.tmux_window_index and state.session.tmux_pane_index then
-        backends[#backends + 1] = state.session.tmux_window_index .. "." .. state.session.tmux_pane_index
+        local label = state.session.tmux_pane_label
+        local pane_part = (label and label ~= "") and label or state.session.tmux_pane_index
+        backends[#backends + 1] = state.session.tmux_window_index .. "." .. pane_part
       end
     end
     local backend = ("[%s]"):format(table.concat(backends, ":"))

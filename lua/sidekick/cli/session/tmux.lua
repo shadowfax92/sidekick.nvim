@@ -8,7 +8,7 @@ local M = {}
 M.__index = M
 
 local PANE_FORMAT =
-  "#{session_id}:#{pane_id}:#{pane_pid}:#{session_name}:#{window_index}:#{pane_index}:#{?pane_current_path,#{pane_current_path},#{pane_start_path}}"
+  "#{session_id}:#{pane_id}:#{pane_pid}:#{session_name}:#{window_index}:#{pane_index}:#{@pane_label}:#{?pane_current_path,#{pane_current_path},#{pane_start_path}}"
 
 ---@return sidekick.cli.terminal.Cmd?
 function M:attach()
@@ -90,8 +90,8 @@ function M.panes(opts)
   local lines = Util.exec(cmd, { notify = opts.notify == true })
   local panes = {} ---@type sidekick.tmux.Pane[]
   for _, line in ipairs(lines or {}) do
-    local session_id, id, pid, session_name, window_index, pane_index, cwd =
-      line:match("^(%$%d+):(%%%d+):(%d+):(.-):(%d+):(%d+):(.*)$")
+    local session_id, id, pid, session_name, window_index, pane_index, pane_label, cwd =
+      line:match("^(%$%d+):(%%%d+):(%d+):(.-):(%d+):(%d+):(.-):(.*)$")
     if id and pid and session_name and cwd then
       pid = assert(tonumber(pid), "invalid tmux pane_pid: " .. pid) --[[@as number]]
       ---@class sidekick.tmux.Pane
@@ -103,6 +103,7 @@ function M.panes(opts)
         session_id = session_id,
         window_index = window_index,
         pane_index = pane_index,
+        pane_label = pane_label,
         cwd = cwd,
       }
     end
@@ -147,6 +148,7 @@ function M.sessions()
             tmux_pid = pane.pid,
             tmux_window_index = pane.window_index,
             tmux_pane_index = pane.pane_index,
+            tmux_pane_label = pane.pane_label,
             mux_session = pane.session_name,
             pids = pids,
           }
