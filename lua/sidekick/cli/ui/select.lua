@@ -116,6 +116,19 @@ function M.format(state, picker)
     -- Keep this for debugging purposes
     -- ret[#ret + 1] = { table.concat(state.session.pids or {}, ",") }
 
+    -- Determine available line width
+    local win_width
+    if picker and picker.list and picker.list.win and picker.list.win.win then
+      local ok, w = pcall(vim.api.nvim_win_get_width, picker.list.win.win)
+      if ok and w > 0 then win_width = w end
+    end
+    -- For non-snacks pickers (fzf-lua, telescope), format_item is called
+    -- before the picker window exists. Use a conservative estimate so the
+    -- full line fits without horizontal scrolling (which hides tool names).
+    if not win_width then
+      win_width = math.floor(vim.o.columns * 0.5)
+    end
+
     local backends = {} ---@type string[]
     backends[#backends + 1] = state.session.mux_backend or state.session.backend
     if state.external then
@@ -130,25 +143,31 @@ function M.format(state, picker)
     end
     local backend = ("[%s]"):format(table.concat(backends, ":"))
 
-    ret[#ret + 1] = { backend, "Special" }
-    len = 12 + sw(backend)
-    ret[#ret + 1] = { string.rep(" ", 40 - len) }
-    local cwd = vim.fn.fnamemodify(state.session.cwd, ":p:~")
-    local prefix_width = 40 + (picker and (sw(tostring(state.idx)) + 2) or 0)
-    local win_width
-    if picker and picker.list and picker.list.win and picker.list.win.win then
-      local ok, w = pcall(vim.api.nvim_win_get_width, picker.list.win.win)
-      if ok and w > 0 then
-        win_width = w
+    -- Shorten session name if backend is too long for available width
+    if state.external and backends[2] then
+      local fixed = math.max(sw(state.tool.name) + 2, 12) + 2
+      if picker then fixed = fixed + sw(tostring(state.idx)) + 2 end
+      local min_path = 20
+      if fixed + sw(backend) + min_path > win_width then
+        local overhead = sw(backend) - sw(backends[2])
+        local max_session = math.max(win_width - fixed - min_path - overhead, 5)
+        backends[2] = shorten_path(backends[2], max_session)
+        backend = ("[%s]"):format(table.concat(backends, ":"))
       end
     end
-    -- For non-snacks pickers (fzf-lua, telescope), format_item is called
-    -- before the picker window exists. Use a conservative estimate so the
-    -- full line fits without horizontal scrolling (which hides tool names).
-    if not win_width then
-      win_width = math.floor(vim.o.columns * 0.5)
+
+    ret[#ret + 1] = { backend, "Special" }
+    len = 12 + sw(backend)
+    ret[#ret + 1] = { string.rep(" ", math.max(40 - len, 1)) }
+
+    -- Compute actual prefix width from accumulated parts
+    local actual_prefix = 0
+    for _, part in ipairs(ret) do
+      actual_prefix = actual_prefix + sw(part[1])
     end
-    local max_path = win_width - prefix_width - 2
+
+    local cwd = vim.fn.fnamemodify(state.session.cwd, ":p:~")
+    local max_path = math.max(win_width - actual_prefix - 2, 10)
     if picker then
       local item = setmetatable({}, state) --[[@as snacks.picker.Item]]
       item.file = shorten_path(cwd, max_path)
