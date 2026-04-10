@@ -7,6 +7,26 @@ local Util = require("sidekick.util")
 
 local M = {}
 
+---Shorten a path from the left, keeping the most meaningful (rightmost) segments.
+---@param path string
+---@param max_width number
+---@return string
+local function shorten_path(path, max_width)
+  local sw = vim.api.nvim_strwidth
+  if max_width <= 0 or sw(path) <= max_width then
+    return path
+  end
+  local parts = vim.split(path, "/", { plain = true })
+  while #parts > 1 do
+    table.remove(parts, 1)
+    local shortened = "…/" .. table.concat(parts, "/")
+    if sw(shortened) <= max_width then
+      return shortened
+    end
+  end
+  return "…" .. path:sub(-(max_width - 1))
+end
+
 ---@param opts sidekick.cli.Select
 function M.select(opts)
   assert(type(opts) == "table", "opts must be a table")
@@ -113,13 +133,16 @@ function M.format(state, picker)
     ret[#ret + 1] = { backend, "Special" }
     len = 12 + sw(backend)
     ret[#ret + 1] = { string.rep(" ", 40 - len) }
+    local cwd = vim.fn.fnamemodify(state.session.cwd, ":p:~")
+    local prefix_width = 40 + (picker and (sw(tostring(state.idx)) + 2) or 0)
+    local max_path = vim.o.columns - prefix_width - 2
     if picker then
       local item = setmetatable({}, state) --[[@as snacks.picker.Item]]
-      item.file = state.session.cwd
+      item.file = shorten_path(cwd, max_path)
       item.dir = true
       vim.list_extend(ret, require("snacks").picker.format.filename(item, picker))
     else
-      ret[#ret + 1] = { vim.fn.fnamemodify(state.session.cwd, ":p:~"), "Directory" }
+      ret[#ret + 1] = { shorten_path(cwd, max_path), "Directory" }
     end
   end
   return ret
