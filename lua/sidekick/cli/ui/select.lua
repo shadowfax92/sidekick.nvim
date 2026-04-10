@@ -135,12 +135,18 @@ function M.format(state, picker)
     ret[#ret + 1] = { string.rep(" ", 40 - len) }
     local cwd = vim.fn.fnamemodify(state.session.cwd, ":p:~")
     local prefix_width = 40 + (picker and (sw(tostring(state.idx)) + 2) or 0)
-    local win_width = vim.o.columns
+    local win_width
     if picker and picker.list and picker.list.win and picker.list.win.win then
       local ok, w = pcall(vim.api.nvim_win_get_width, picker.list.win.win)
       if ok and w > 0 then
         win_width = w
       end
+    end
+    -- For non-snacks pickers (fzf-lua, telescope), format_item is called
+    -- before the picker window exists. Use a conservative estimate so the
+    -- full line fits without horizontal scrolling (which hides tool names).
+    if not win_width then
+      win_width = math.floor(vim.o.columns * 0.5)
     end
     local max_path = win_width - prefix_width - 2
     if picker then
