@@ -135,7 +135,14 @@ function M.format(state, picker)
     ret[#ret + 1] = { string.rep(" ", 40 - len) }
     local cwd = vim.fn.fnamemodify(state.session.cwd, ":p:~")
     local prefix_width = 40 + (picker and (sw(tostring(state.idx)) + 2) or 0)
-    local max_path = vim.o.columns - prefix_width - 2
+    local win_width = vim.o.columns
+    if picker and picker.list and picker.list.win and picker.list.win.win then
+      local ok, w = pcall(vim.api.nvim_win_get_width, picker.list.win.win)
+      if ok and w > 0 then
+        win_width = w
+      end
+    end
+    local max_path = win_width - prefix_width - 2
     if picker then
       local item = setmetatable({}, state) --[[@as snacks.picker.Item]]
       item.file = shorten_path(cwd, max_path)
