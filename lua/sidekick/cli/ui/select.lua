@@ -153,7 +153,9 @@ function M.format(state, picker)
       backends[#backends + 1] = state.session.mux_session
       if state.session.tmux_window_index and state.session.tmux_pane_index then
         local window_part = tmux_part(state.session.tmux_window_index, state.session.tmux_window_name)
-        local pane_part = tmux_part(state.session.tmux_pane_index, state.session.tmux_pane_label)
+        local ltitle = state.session.tmux_layouts_title
+        local pane_label = ltitle and ltitle ~= "" and ltitle or state.session.tmux_pane_label
+        local pane_part = tmux_part(state.session.tmux_pane_index, pane_label)
         backends[#backends + 1] = window_part .. "." .. pane_part
       end
     end
