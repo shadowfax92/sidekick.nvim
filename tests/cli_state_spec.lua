@@ -158,6 +158,37 @@ describe("cli state routing", function()
     assert.is_false(outside._attached)
   end)
 
+  it("multicast also sends to attached sessions outside scope", function()
+    local scoped = session("claude", "scoped")
+    local outside = session("codex", "outside")
+    outside._attached = true
+    Session.sessions = function()
+      return { scoped, outside }
+    end
+    Session.attached = function()
+      return { outside }
+    end
+    Affinity.score = function(_, s)
+      if s.id == "scoped" then
+        return { exact_cwd = false, same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 500, badges = {} }
+      end
+      return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+    end
+
+    local used = {}
+    State.with(function(state)
+      used[#used + 1] = state.session.id
+    end, {
+      attach = true,
+      multicast = true,
+      scope = "project",
+    })
+
+    table.sort(used)
+    assert.are.same({ "outside", "scoped" }, used)
+    assert.is_true(scoped._attached)
+  end)
+
   it("falls back to scoped selection for single-target flows", function()
     local scoped_1 = session("claude", "scoped-1")
     local scoped_2 = session("codex", "scoped-2")

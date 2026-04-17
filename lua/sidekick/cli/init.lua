@@ -63,6 +63,98 @@ end
 
 local FILTER_KEYS = { "attached", "cwd", "external", "installed", "name", "session", "started", "terminal" }
 
+---@param text string?
+---@param max_width? number
+---@return string?
+local function shorten_summary(text, max_width)
+  text = text and vim.trim(text) or nil
+  if not text or text == "" then
+    return
+  end
+  text = text:gsub("%s+", " ")
+  max_width = max_width or 80
+  if vim.api.nvim_strwidth(text) <= max_width then
+    return text
+  end
+  return "…" .. text:sub(-(max_width - 1))
+end
+
+---@param msg string?
+---@return string?
+local function context_summary(msg)
+  for _, line in ipairs(vim.split(msg or "", "\n", { plain = true })) do
+    local summary = shorten_summary(line)
+    if summary then
+      return summary
+    end
+  end
+end
+
+---@param opts sidekick.cli.Send
+---@param mode "send"|"comment"
+---@return string
+local function operation_name(opts, mode)
+  if mode == "comment" then
+    return "comment"
+  end
+  local template = opts.msg or ""
+  if opts.prompt then
+    return "prompt"
+  end
+  if template:find("{file", 1, true) then
+    return "file"
+  end
+  if template:find("{line", 1, true) then
+    return "line"
+  end
+  if template:find("{selection", 1, true) then
+    return "selection"
+  end
+  if template:find("{this}", 1, true) then
+    return "context"
+  end
+  return "message"
+end
+
+---@param opts sidekick.cli.Send
+---@param msg string?
+---@param mode "send"|"comment"
+---@return {resolved: fun(states: sidekick.cli.State[]), sent: fun()}
+local function send_notifier(opts, msg, mode)
+  local operation = operation_name(opts, mode)
+  local summary = context_summary(msg)
+  local targets = {} ---@type sidekick.cli.State[]
+  local remaining = 0
+
+  local function notify()
+    local target = ("Sent %s to %d agent%s"):format(operation, #targets, #targets == 1 and "" or "s")
+    if #targets == 1 then
+      target = ("%s (%s)"):format(target, targets[1].tool.name)
+    end
+    local parts = { target }
+    if summary then
+      parts[#parts + 1] = summary
+    end
+    Util.info(table.concat(parts, " · "), { timeout = 1000 })
+  end
+
+  return {
+    resolved = function(states)
+      targets = states
+      remaining = #states
+    end,
+    sent = function()
+      if remaining == 0 then
+        return
+      end
+      remaining = remaining - 1
+      if remaining == 0 then
+        notify()
+      end
+    end,
+  }
+end
+
 ---@generic T: {name?:string, filter?:sidekick.cli.Filter}
 ---@param opts? T|string
 ---@return T
@@ -224,14 +316,17 @@ function M.send(opts)
     end
   end
 
+  local notify = send_notifier(opts, msg, "send")
+
   State.with(function(state)
     Util.exit_visual_mode()
     vim.schedule(function()
-      msg = state.tool:format(text)
-      state.session:send(msg .. "\n")
+      local formatted = state.tool:format(text)
+      state.session:send(formatted .. "\n")
       if opts.submit then
         state.session:submit()
       end
+      notify.sent()
     end)
   end, {
     attach = true,
@@ -239,6 +334,7 @@ function M.send(opts)
     filter = opts.filter,
     focus = opts.focus,
     multicast = opts.multicast ~= false and Config.cli.multicast ~= false,
+    on_resolved = notify.resolved,
     scope = opts.scope,
     show = true,
   })
@@ -281,6 +377,7 @@ function M.send_with_comment(opts)
       local combined = Text.to_text(quoted)
       table.insert(combined, { { "" } })
       vim.list_extend(combined, text)
+      local notify = send_notifier(opts, msg, "comment")
 
       State.with(function(state)
         vim.schedule(function()
@@ -289,6 +386,7 @@ function M.send_with_comment(opts)
           if opts.submit then
             state.session:submit()
           end
+          notify.sent()
         end)
       end, {
         attach = true,
@@ -296,6 +394,7 @@ function M.send_with_comment(opts)
         filter = opts.filter,
         focus = opts.focus,
         multicast = opts.multicast ~= false and Config.cli.multicast ~= false,
+        on_resolved = notify.resolved,
         scope = opts.scope,
         show = true,
       })

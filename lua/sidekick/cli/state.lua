@@ -33,6 +33,7 @@ local M = {}
 ---@field attach? boolean
 ---@field all? boolean
 ---@field multicast? boolean
+---@field on_resolved? fun(states: sidekick.cli.State[])
 ---@field scope? "cwd"|"project"|"all"
 
 local function affinity_score(state)
@@ -85,6 +86,21 @@ local function summarize(states)
   return table.concat(vim.tbl_map(function(name)
     return ("%d %s"):format(counts[name], name)
   end, names), ", ")
+end
+
+---@param states sidekick.cli.State[]
+---@return sidekick.cli.State[]
+local function dedupe(states)
+  local seen = {} ---@type table<string, boolean>
+  local ret = {} ---@type sidekick.cli.State[]
+  for _, state in ipairs(states) do
+    local id = state.session and state.session.id or state.tool.name
+    if not seen[id] then
+      seen[id] = true
+      ret[#ret + 1] = state
+    end
+  end
+  return ret
 end
 
 ---@param t sidekick.cli.State
@@ -244,6 +260,7 @@ end
 function M.with(cb, opts)
   opts = opts or {}
   cb = vim.schedule_wrap(cb)
+  local on_resolved = opts.on_resolved or function() end
 
   ---@param state sidekick.cli.State
   local use = vim.schedule_wrap(function(state)
@@ -254,24 +271,48 @@ function M.with(cb, opts)
     cb(ret, attached)
   end)
 
-  local filter_attached = Util.merge(opts.filter, { attached = true })
-  local scope = scope_kind(opts)
-  local attached = in_scope(M.get(filter_attached), scope)
-  local targets = attached
-  if opts.multicast and opts.attach and auto_attach_enabled("on_demand") then
-    targets = M.auto_attach(opts.filter, { focus = opts.focus, multiple = true, scope = scope, show = opts.show })
+  ---@param states sidekick.cli.State[]
+  local function apply(states)
+    if #states == 0 then
+      return
+    end
+    on_resolved(states)
+    vim.tbl_map(use, states)
   end
 
+  ---@param filter sidekick.cli.Filter?
+  ---@param scope_override? "cwd"|"project"|"all"
+  local function pick(filter, scope_override)
+    require("sidekick.cli.ui.select").select({
+      auto = true,
+      filter = filter,
+      cb = function(state)
+        if state then
+          apply({ state })
+        end
+      end,
+      scope = scope_override,
+    })
+  end
+
+  local filter_attached = Util.merge(opts.filter, { attached = true })
+  local scope = scope_kind(opts)
+  local attached_all = M.get(filter_attached)
+  local attached = in_scope(attached_all, scope)
+
   if opts.multicast then
-    if #targets == 0 and opts.attach then
-      require("sidekick.cli.ui.select").select({
-        auto = true,
-        filter = opts.filter,
-        cb = use,
-        scope = scope,
-      })
-    else
-      vim.tbl_map(use, targets)
+    local targets = attached_all
+    if opts.attach and auto_attach_enabled("on_demand") then
+      targets = dedupe(vim.list_extend(vim.deepcopy(attached_all), M.auto_attach(
+        opts.filter,
+        { focus = opts.focus, multiple = true, scope = scope, show = opts.show }
+      )))
+    end
+
+    if #targets > 0 then
+      apply(targets)
+    elseif opts.attach then
+      pick(opts.filter, scope)
     end
     return
   end
@@ -284,22 +325,18 @@ function M.with(cb, opts)
     end
   end
 
-  if #attached == 0 and opts.attach then
-    require("sidekick.cli.ui.select").select({
-      auto = true,
-      filter = opts.filter,
-      cb = use,
-      scope = scope,
-    })
+  if #attached == 0 and #attached_all > 0 then
+    if #attached_all > 1 and not opts.all then
+      pick(filter_attached)
+    else
+      apply(attached_all)
+    end
+  elseif #attached == 0 and opts.attach then
+    pick(opts.filter, scope)
   elseif #attached > 1 and not opts.all then
-    require("sidekick.cli.ui.select").select({
-      auto = true,
-      filter = filter_attached,
-      cb = use,
-      scope = scope,
-    })
+    pick(filter_attached, scope)
   else
-    vim.tbl_map(use, attached)
+    apply(attached)
   end
 end
 

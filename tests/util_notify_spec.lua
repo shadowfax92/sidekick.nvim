@@ -16,14 +16,14 @@ describe("util notify", function()
     end
 
     Util.error("oops")
-    Util.info("hello")
+    Util.info("hello", { timeout = 1000 })
 
     vim.schedule = original_schedule
     vim.notify = original_notify
 
     assert.are.same({
       { msg = "oops", level = vim.log.levels.ERROR, opts = { title = "Sidekick" } },
-      { msg = "hello", level = vim.log.levels.INFO, opts = { title = "Sidekick" } },
+      { msg = "hello", level = vim.log.levels.INFO, opts = { timeout = 1000, title = "Sidekick" } },
     }, called)
   end)
 end)

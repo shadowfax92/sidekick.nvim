@@ -71,7 +71,7 @@ Sidekick now auto-discovers matching tmux agents in the current project and atta
 - on demand, when a send/toggle/focus flow needs a target
 - manually, via `require("sidekick.cli").auto_attach()`
 
-Send flows are multicast by default, but only within the configured scope. The default scope is the current project, not every attached tmux session on the machine.
+Send flows multicast to all attached sessions by default. The configured scope is still used for startup and on-demand auto-attach, so current-project agents are added automatically before send dispatch.
 
 Controlled by config:
 
@@ -87,6 +87,22 @@ cli = {
   },
 }
 ```
+
+### Send Notifications
+
+Every successful send-family operation shows a short confirmation notification for about one second.
+
+Example:
+
+```text
+Sent comment to 3 agents · ~/project/file.lua:L12-L18
+```
+
+The notification includes:
+
+- how many agents received the send
+- what kind of send it was (`line`, `file`, `comment`, etc.)
+- a brief context summary, usually the file and line range
 
 ### Visual Mode Fix
 

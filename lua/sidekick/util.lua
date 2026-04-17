@@ -2,16 +2,18 @@ local M = {}
 
 ---@param msg string|string[]
 ---@param level? vim.log.levels
-function M.notify(msg, level)
+---@param opts? vim.notify.Opts
+function M.notify(msg, level, opts)
   msg = type(msg) == "table" and table.concat(msg, "\n") or msg
   vim.schedule(function()
-    vim.notify(msg, level or vim.log.levels.INFO, { title = "Sidekick" })
+    vim.notify(msg, level or vim.log.levels.INFO, vim.tbl_extend("force", { title = "Sidekick" }, opts or {}))
   end)
 end
 
 ---@param msg string|string[]
-function M.info(msg)
-  M.notify(msg, vim.log.levels.INFO)
+---@param opts? vim.notify.Opts
+function M.info(msg, opts)
+  M.notify(msg, vim.log.levels.INFO, opts)
 end
 
 ---@param msg string|string[]
