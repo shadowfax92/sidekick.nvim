@@ -44,24 +44,24 @@ Useful when the AI tool is running outside the project's cwd (e.g., an attached 
 
 ### Better Tmux Pane Identification
 
-The session picker now shows `window.pane` for external tmux sessions, matching standard tmux addressing:
+The session picker now shows the tmux window and pane address for external sessions:
 
 ```
 [tmux:mysession:1.0]   ~/projects/myapp
 ```
 
-The window and pane parts prefer human-readable names when available:
+If a human-readable name exists, Sidekick keeps the numeric address and appends the name:
 
-- Window: uses `#{window_name}` if non-empty, otherwise falls back to `#{window_index}`.
-- Pane: uses the `@pane_label` tmux user option if set (`tmux set-option -p @pane_label panda`), otherwise falls back to `#{pane_index}`.
+- Window: `#{window_index}` or `#{window_index}(#{window_name})`
+- Pane: `#{pane_index}` or `#{pane_index}(@pane_label)`
 
 So a session with a renamed window (`editor`) and a labeled pane (`panda`) shows as:
 
 ```
-[tmux:mysession:editor.panda]   ~/projects/myapp
+[tmux:mysession:1(editor).0(panda)]   ~/projects/myapp
 ```
 
-No more monkey-patching `select_mod.format` to get pane numbers.
+This keeps the stable tmux address visible while still surfacing the names you care about.
 
 ### Auto-Attach to External Sessions
 

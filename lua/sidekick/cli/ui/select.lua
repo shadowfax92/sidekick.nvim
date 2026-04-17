@@ -27,6 +27,20 @@ local function shorten_path(path, max_width)
   return "…" .. path:sub(-(max_width - 1))
 end
 
+---@param index string|number?
+---@param label string?
+---@return string?
+local function tmux_part(index, label)
+  if index == nil then
+    return
+  end
+  index = tostring(index)
+  if label and label ~= "" then
+    return ("%s(%s)"):format(index, label)
+  end
+  return index
+end
+
 ---@param opts sidekick.cli.Select
 function M.select(opts)
   assert(type(opts) == "table", "opts must be a table")
@@ -138,10 +152,8 @@ function M.format(state, picker)
     if state.external then
       backends[#backends + 1] = state.session.mux_session
       if state.session.tmux_window_index and state.session.tmux_pane_index then
-        local wname = state.session.tmux_window_name
-        local window_part = (wname and wname ~= "") and wname or state.session.tmux_window_index
-        local label = state.session.tmux_pane_label
-        local pane_part = (label and label ~= "") and label or state.session.tmux_pane_index
+        local window_part = tmux_part(state.session.tmux_window_index, state.session.tmux_window_name)
+        local pane_part = tmux_part(state.session.tmux_pane_index, state.session.tmux_pane_label)
         backends[#backends + 1] = window_part .. "." .. pane_part
       end
     end

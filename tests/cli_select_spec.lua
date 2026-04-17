@@ -18,7 +18,9 @@ describe("cli select formatter", function()
         backend = "tmux",
         cwd = "/tmp/project",
         mux_session = "main",
+        tmux_pane_label = "panda",
         tmux_pane_index = "2",
+        tmux_window_name = "editor",
         tmux_window_index = "1",
       },
       started = true,
@@ -31,6 +33,7 @@ describe("cli select formatter", function()
 
     assert.matches("%[cwd%]", text)
     assert.matches("%[win%]", text)
+    assert.matches("%[tmux:main:1%(editor%).2%(panda%)%]", text)
     assert.is_true(vim.tbl_contains(vim.tbl_map(function(part)
       return part[2]
     end, parts), "SidekickCliAffinityCwd"))
