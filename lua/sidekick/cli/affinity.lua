@@ -41,7 +41,8 @@ local function project_id(project)
   if not project then
     return
   end
-  return project.git_common_dir or project.worktree_root
+  -- Linked worktrees share git_common_dir, but they should not collapse into one Sidekick project scope.
+  return project.worktree_root or project.git_common_dir
 end
 
 ---@param affinity sidekick.cli.Affinity

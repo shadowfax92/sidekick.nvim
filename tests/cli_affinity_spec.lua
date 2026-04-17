@@ -14,10 +14,10 @@ describe("cli affinity", function()
     Affinity.reset()
   end)
 
-  it("scores project and tmux affinity with badges", function()
+  it("scores same worktree project and tmux affinity with badges", function()
     local projects = {
       ["/repo/app"] = { cwd = "/repo/app", worktree_root = "/repo/app", git_common_dir = "/git/main" },
-      ["/repo/other"] = { cwd = "/repo/other", worktree_root = "/repo/other", git_common_dir = "/git/main" },
+      ["/repo/app/subdir"] = { cwd = "/repo/app/subdir", worktree_root = "/repo/app", git_common_dir = "/git/main" },
     }
     Affinity.project = function(path)
       return projects[path]
@@ -30,7 +30,7 @@ describe("cli affinity", function()
       tmux_window_index = "2",
       tmux_pane_id = "%1",
     }, {
-      cwd = "/repo/other",
+      cwd = "/repo/app/subdir",
       mux_session = "main",
       tmux_window_index = "2",
       tmux_pane_id = "%2",
@@ -46,6 +46,33 @@ describe("cli affinity", function()
       { text = "root", hl = "SidekickCliAffinityRoot" },
       { text = "win", hl = "SidekickCliAffinityWindow" },
     }, affinity.badges)
+  end)
+
+  it("does not treat sibling worktrees as the same project", function()
+    local projects = {
+      ["/repo/.worktrees/task-a"] = { cwd = "/repo/.worktrees/task-a", worktree_root = "/repo/.worktrees/task-a", git_common_dir = "/repo/.git" },
+      ["/repo/.worktrees/task-b"] = { cwd = "/repo/.worktrees/task-b", worktree_root = "/repo/.worktrees/task-b", git_common_dir = "/repo/.git" },
+    }
+    Affinity.project = function(path)
+      return projects[path]
+    end
+
+    local affinity = Affinity.score({
+      cwd = "/repo/.worktrees/task-a",
+      project = projects["/repo/.worktrees/task-a"],
+      tmux_session = "main",
+      tmux_window_index = "2",
+      tmux_pane_id = "%1",
+    }, {
+      cwd = "/repo/.worktrees/task-b",
+      mux_session = "other",
+      tmux_window_index = "7",
+      tmux_pane_id = "%7",
+    })
+
+    assert.is_false(affinity.same_git_root)
+    assert.is_false(Affinity.in_scope(affinity, "project"))
+    assert.are.same({}, affinity.badges)
   end)
 
   it("treats exact cwd as both cwd and project scoped", function()
