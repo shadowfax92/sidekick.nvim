@@ -30,7 +30,11 @@ end
 ---@param opts sidekick.cli.Select
 function M.select(opts)
   assert(type(opts) == "table", "opts must be a table")
-  local tools = require("sidekick.cli.state").get(opts.filter)
+  local State = require("sidekick.cli.state")
+  local tools = opts.scope and State.scoped(opts.filter, opts.scope) or State.get(opts.filter)
+  if opts.scope and #tools == 0 then
+    tools = State.get(opts.filter)
+  end
 
   ---@param state? sidekick.cli.State
   local on_select = function(state)
@@ -159,6 +163,10 @@ function M.format(state, picker)
     ret[#ret + 1] = { backend, "Special" }
     len = 12 + sw(backend)
     ret[#ret + 1] = { string.rep(" ", math.max(40 - len, 1)) }
+    for _, badge in ipairs(state.affinity and state.affinity.badges or {}) do
+      ret[#ret + 1] = { "[" .. badge.text .. "]", badge.hl }
+      ret[#ret + 1] = { " " }
+    end
 
     -- Compute actual prefix width from accumulated parts
     local actual_prefix = 0

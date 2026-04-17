@@ -1,4 +1,5 @@
 local Context = require("sidekick.cli.context")
+local Config = require("sidekick.config")
 local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
@@ -27,6 +28,7 @@ local M = {}
 ---@field focus? boolean
 ---@field filter? sidekick.cli.Filter
 ---@field all? boolean
+---@field scope? "cwd"|"project"|"all"
 
 ---@class sidekick.cli.Hide
 ---@field name? string
@@ -34,6 +36,7 @@ local M = {}
 ---@field all? boolean
 
 ---@class sidekick.cli.Send: sidekick.cli.Show,sidekick.cli.Message
+---@field multicast? boolean
 ---@field submit? boolean
 
 --- Keymap options similar to `vim.keymap.set` and `lazy.nvim` mappings
@@ -58,6 +61,8 @@ local function resolve_visual_msg(opts)
   end
 end
 
+local FILTER_KEYS = { "attached", "cwd", "external", "installed", "name", "session", "started", "terminal" }
+
 ---@generic T: {name?:string, filter?:sidekick.cli.Filter}
 ---@param opts? T|string
 ---@return T
@@ -65,7 +70,11 @@ local function filter_opts(opts)
   opts = type(opts) == "string" and { name = opts } or opts or {}
   ---@cast opts {name?:string, filter?:sidekick.cli.Filter}
   opts.filter = opts.filter or {}
-  opts.filter.name = opts.name or opts.filter.name or nil
+  for _, key in ipairs(FILTER_KEYS) do
+    if opts[key] ~= nil and opts.filter[key] == nil then
+      opts.filter[key] = opts[key]
+    end
+  end
   return opts
 end
 
@@ -99,6 +108,17 @@ function M.select(opts)
 end
 
 ---@param opts? sidekick.cli.Show
+function M.auto_attach(opts)
+  opts = filter_opts(opts)
+  return State.auto_attach(opts.filter, {
+    focus = opts.focus,
+    multiple = true,
+    scope = opts.scope,
+    show = true,
+  })
+end
+
+---@param opts? sidekick.cli.Show
 ---@overload fun(name: string)
 function M.show(opts)
   opts = filter_opts(opts)
@@ -107,6 +127,7 @@ function M.show(opts)
     attach = true,
     filter = opts.filter,
     focus = opts.focus,
+    scope = opts.scope,
     show = true,
   })
 end
@@ -128,6 +149,7 @@ function M.toggle(opts)
   end, {
     attach = true,
     filter = opts.filter,
+    scope = opts.scope,
   })
 end
 
@@ -149,6 +171,7 @@ function M.focus(opts)
     attach = true,
     filter = opts.filter,
     focus = false,
+    scope = opts.scope,
     show = true,
   })
 end
@@ -212,8 +235,11 @@ function M.send(opts)
     end)
   end, {
     attach = true,
+    all = opts.all,
     filter = opts.filter,
     focus = opts.focus,
+    multicast = opts.multicast ~= false and Config.cli.multicast ~= false,
+    scope = opts.scope,
     show = true,
   })
 end
@@ -266,8 +292,11 @@ function M.send_with_comment(opts)
         end)
       end, {
         attach = true,
+        all = opts.all,
         filter = opts.filter,
         focus = opts.focus,
+        multicast = opts.multicast ~= false and Config.cli.multicast ~= false,
+        scope = opts.scope,
         show = true,
       })
     end,

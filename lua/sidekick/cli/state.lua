@@ -1,3 +1,4 @@
+local Affinity = require("sidekick.cli.affinity")
 local Config = require("sidekick.config")
 local Session = require("sidekick.cli.session")
 local Terminal = require("sidekick.cli.terminal")
@@ -8,6 +9,7 @@ local M = {}
 ---@class sidekick.cli.State
 ---@field tool sidekick.cli.Tool
 ---@field attached? boolean
+---@field affinity? sidekick.cli.Affinity
 ---@field external? boolean
 ---@field installed? boolean
 ---@field session? sidekick.cli.Session
@@ -30,6 +32,60 @@ local M = {}
 ---@field focus? boolean
 ---@field attach? boolean
 ---@field all? boolean
+---@field multicast? boolean
+---@field scope? "cwd"|"project"|"all"
+
+local function affinity_score(state)
+  return state.affinity and state.affinity.score or 0
+end
+
+local function auto_attach_config()
+  return Config.cli.mux.auto_attach or {}
+end
+
+---@param kind "startup"|"on_demand"
+local function auto_attach_enabled(kind)
+  return auto_attach_config()[kind] == true
+end
+
+---@param opts sidekick.cli.With
+local function scope_kind(opts)
+  if opts.all then
+    return "all"
+  end
+  return opts.scope or auto_attach_config().scope or "project"
+end
+
+---@param states sidekick.cli.State[]
+local function decorate(states)
+  local scope = Affinity.current_scope()
+  for _, state in ipairs(states) do
+    state.affinity = state.session and Affinity.score(scope, state.session) or nil
+  end
+end
+
+---@param states sidekick.cli.State[]
+---@param kind "cwd"|"project"|"all"
+local function in_scope(states, kind)
+  return vim.tbl_filter(function(state)
+    return Affinity.in_scope(state.affinity, kind)
+  end, states)
+end
+
+---@param states sidekick.cli.State[]
+local function summarize(states)
+  local counts = {} ---@type table<string, integer>
+  for _, state in ipairs(states) do
+    if state.tool then
+      counts[state.tool.name] = (counts[state.tool.name] or 0) + 1
+    end
+  end
+  local names = vim.tbl_keys(counts)
+  table.sort(names)
+  return table.concat(vim.tbl_map(function(name)
+    return ("%d %s"):format(counts[name], name)
+  end, names), ", ")
+end
 
 ---@param t sidekick.cli.State
 ---@param filter? sidekick.cli.Filter
@@ -113,9 +169,13 @@ function M.get(filter)
   local ret = vim.tbl_filter(function(t)
     return M.is(t, filter)
   end, all)
+  decorate(ret)
   table.sort(ret, function(a, b)
     if a.installed ~= b.installed then
       return a.installed
+    end
+    if affinity_score(a) ~= affinity_score(b) then
+      return affinity_score(a) > affinity_score(b)
     end
     -- sessions in cwd, or tools without a session
     local a_cwd = (not a.session or a.session.cwd == cwd or false)
@@ -137,6 +197,47 @@ function M.get(filter)
   return ret
 end
 
+---@param filter? sidekick.cli.Filter
+---@param scope "cwd"|"project"|"all"
+---@return sidekick.cli.State[]
+function M.scoped(filter, scope)
+  return in_scope(M.get(filter), scope)
+end
+
+---@param filter? sidekick.cli.Filter
+---@param opts? {scope?:"cwd"|"project"|"all", show?:boolean, focus?:boolean, multiple?:boolean}
+---@return sidekick.cli.State[]
+function M.auto_attach(filter, opts)
+  opts = opts or {}
+  local states = in_scope(M.get(Util.merge(filter, { started = true })), opts.scope or "project")
+  if #states == 0 then
+    return {}
+  end
+  if opts.multiple == false and #states ~= 1 then
+    return {}
+  end
+
+  local attached = {} ---@type sidekick.cli.State[]
+  local newly_attached = {} ---@type sidekick.cli.State[]
+  for _, state in ipairs(states) do
+    local ret, did_attach = M.attach(state, { show = opts.show, focus = opts.focus, notify = false })
+    attached[#attached + 1] = ret
+    if did_attach then
+      newly_attached[#newly_attached + 1] = ret
+    end
+  end
+
+  if #newly_attached > 0 then
+    Util.info(("Auto-attached %d agent%s (%s)"):format(
+      #newly_attached,
+      #newly_attached == 1 and "" or "s",
+      summarize(newly_attached)
+    ))
+  end
+
+  return attached
+end
+
 --- Executes a callback with one or more attached sessions.
 ---@param cb fun(state: sidekick.cli.State, attached?: boolean):any?
 ---@param opts? sidekick.cli.With
@@ -154,16 +255,31 @@ function M.with(cb, opts)
   end)
 
   local filter_attached = Util.merge(opts.filter, { attached = true })
-  local attached = M.get(filter_attached)
+  local scope = scope_kind(opts)
+  local attached = in_scope(M.get(filter_attached), scope)
+  local targets = attached
+  if opts.multicast and opts.attach and auto_attach_enabled("on_demand") then
+    targets = M.auto_attach(opts.filter, { focus = opts.focus, multiple = true, scope = scope, show = opts.show })
+  end
 
-  if #attached == 0 and opts.attach and Config.cli.mux.auto_attach ~= false then
-    local candidates = M.get(opts.filter)
-    local started = vim.tbl_filter(function(t)
-      return t.started
-    end, candidates)
-    if #started == 1 then
-      Util.info(("Auto-attached to `%s`"):format(started[1].tool.name))
-      use(started[1])
+  if opts.multicast then
+    if #targets == 0 and opts.attach then
+      require("sidekick.cli.ui.select").select({
+        auto = true,
+        filter = opts.filter,
+        cb = use,
+        scope = scope,
+      })
+    else
+      vim.tbl_map(use, targets)
+    end
+    return
+  end
+
+  if #attached == 0 and opts.attach and auto_attach_enabled("on_demand") then
+    local auto = M.auto_attach(opts.filter, { focus = opts.focus, multiple = false, scope = scope, show = opts.show })
+    if #auto == 1 then
+      use(auto[1])
       return
     end
   end
@@ -173,12 +289,14 @@ function M.with(cb, opts)
       auto = true,
       filter = opts.filter,
       cb = use,
+      scope = scope,
     })
   elseif #attached > 1 and not opts.all then
     require("sidekick.cli.ui.select").select({
       auto = true,
       filter = filter_attached,
       cb = use,
+      scope = scope,
     })
   else
     vim.tbl_map(use, attached)
@@ -186,7 +304,7 @@ function M.with(cb, opts)
 end
 
 ---@param state sidekick.cli.State
----@param opts? {show?:boolean, focus?:boolean}
+---@param opts? {show?:boolean, focus?:boolean, notify?:boolean}
 ---@return sidekick.cli.State state, boolean attached whether we just attached
 function M.attach(state, opts)
   opts = opts or {}
@@ -206,7 +324,7 @@ function M.attach(state, opts)
         terminal:focus()
       end
     end
-  elseif attached then
+  elseif attached and opts.notify ~= false then
     Util.info("Attached to `" .. state.tool.name .. "`")
   end
   return state, attached

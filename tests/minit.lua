@@ -9,6 +9,22 @@ else
   load(vim.fn.system("curl -s https://raw.githubusercontent.com/folke/lazy.nvim/main/bootstrap.lua"), "bootstrap.lua")()
 end
 
+if type(vim.list) ~= "table" or type(vim.list.unique) ~= "function" then
+  vim.list = {
+    unique = function(items)
+      local ret = {}
+      local seen = {}
+      for _, item in ipairs(items) do
+        if not seen[item] then
+          seen[item] = true
+          ret[#ret + 1] = item
+        end
+      end
+      return ret
+    end,
+  }
+end
+
 -- Setup lazy.nvim
 require("lazy.minit").setup({
   spec = {

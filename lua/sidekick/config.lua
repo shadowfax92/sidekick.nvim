@@ -3,6 +3,28 @@ local M = {}
 
 M.ns = vim.api.nvim_create_namespace("sidekick.ui")
 
+---@param value boolean|table<string, any>|nil
+local function normalize_auto_attach(value)
+  local defaults = {
+    on_demand = true,
+    scope = "project",
+    startup = true,
+  }
+  if value == false then
+    return vim.tbl_extend("force", defaults, {
+      on_demand = false,
+      startup = false,
+    })
+  end
+  if value == true or value == nil then
+    return defaults
+  end
+  if type(value) == "table" then
+    return vim.tbl_deep_extend("force", {}, defaults, value)
+  end
+  return value
+end
+
 ---@class sidekick.Config
 local defaults = {
   nes = {
@@ -32,6 +54,7 @@ local defaults = {
   },
   -- Work with AI cli tools directly from within Neovim
   cli = {
+    multicast = true, -- send to all matching sessions in the current project scope
     watch = true, -- notify Neovim of file changes done by AI CLI tools
     ---@class sidekick.win.Opts
     win = {
@@ -80,6 +103,10 @@ local defaults = {
       --- Defaults to `vim.cmd.wincmd`. Used by the `nav_*` keymaps.
       nav = nil,
     },
+    ---@class sidekick.cli.AutoAttach
+    ---@field startup? boolean auto-attach matching sessions on `VimEnter`
+    ---@field on_demand? boolean auto-attach matching sessions when a CLI flow requests a target
+    ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
     mux = {
@@ -94,7 +121,11 @@ local defaults = {
         vertical = true, -- vertical or horizontal split
         size = 0.5, -- size of the split (0-1 for percentage)
       },
-      auto_attach = true, -- auto-attach when exactly one external session matches
+      auto_attach = {
+        startup = true,
+        on_demand = true,
+        scope = "project",
+      },
     },
     --- Actual cli tool config is loaded from the runtime path `sk/cli/{tool}.lua` and merged with the config below.
     --- For default configs, see https://github.com/folke/sidekick.nvim/tree/main/sk/cli
@@ -182,6 +213,7 @@ end
 ---@param opts? sidekick.Config
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", {}, vim.deepcopy(defaults), opts or {})
+  config.cli.mux.auto_attach = normalize_auto_attach(config.cli.mux.auto_attach)
 
   vim.api.nvim_create_user_command("Sidekick", function(args)
     require("sidekick.commands").cmd(args)
@@ -218,9 +250,28 @@ function M.setup(opts)
 
     require("sidekick.status").setup()
 
+    if config.cli.mux.enabled and config.cli.mux.auto_attach.startup then
+      local auto_attach = function()
+        require("sidekick.cli").auto_attach({ focus = false })
+      end
+      if vim.v.vim_did_enter == 1 then
+        auto_attach()
+      else
+        vim.api.nvim_create_autocmd("VimEnter", {
+          group = M.augroup,
+          once = true,
+          callback = auto_attach,
+        })
+      end
+    end
+
+    M.validate("cli.multicast", "boolean")
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
     M.validate("cli.mux.backend", { "tmux", "zellij" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
+    M.validate("cli.mux.auto_attach.on_demand", "boolean")
+    M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
+    M.validate("cli.mux.auto_attach.startup", "boolean")
     M.validate("nes.diff.show", { "always", "cursor" })
   end)
 end
@@ -290,6 +341,10 @@ function M.set_hl()
     CliStarted = "DiagnosticWarn",
     CliInstalled = "DiagnosticOk",
     CliUnavailable = "DiagnosticError",
+    CliAffinityCwd = "DiagnosticOk",
+    CliAffinityPane = "DiagnosticInfo",
+    CliAffinityRoot = "Special",
+    CliAffinityWindow = "DiagnosticWarn",
     LocDelim = "Delimiter",
     LocFile = "@markup.link",
     LocNum = "@attribute",
