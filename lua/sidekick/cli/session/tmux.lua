@@ -7,8 +7,47 @@ local Util = require("sidekick.util")
 local M = {}
 M.__index = M
 
+local FIELD_SEP = "\tSIDEKICK_FIELD\t"
+local RECORD_SEP = "\tSIDEKICK_RECORD\t"
 local PANE_FORMAT =
-  "#{session_id}:#{pane_id}:#{pane_pid}:#{session_name}:#{window_name}:#{window_index}:#{pane_index}:#{@pane_label}:#{@layouts_title}:#{?pane_current_path,#{pane_current_path},#{pane_start_path}}"
+  table.concat({
+    "#{session_id}",
+    "#{pane_id}",
+    "#{pane_pid}",
+    "#{session_name}",
+    "#{window_name}",
+    "#{window_index}",
+    "#{pane_index}",
+    "#{@pane_label}",
+    "#{@layouts_title}",
+    "#{?pane_current_path,#{pane_current_path},#{pane_start_path}}",
+  }, FIELD_SEP) .. RECORD_SEP
+
+---@param str string?
+local function clean_tmux_field(str)
+  return str and str:gsub("[\r\n]+", " ") or str
+end
+
+---@param lines string[]?
+---@param stdout string?
+---@return string[]
+local function pane_records(lines, stdout)
+  if stdout and stdout:find(RECORD_SEP, 1, true) then
+    return vim.tbl_map(function(record)
+      return record:gsub("^[\r\n]+", ""):gsub("[\r\n]+$", "")
+    end, vim.split(stdout, RECORD_SEP, { plain = true, trimempty = true }))
+  end
+  return lines or {}
+end
+
+---@param record string
+local function parse_pane_record(record)
+  local parts = vim.split(record, FIELD_SEP, { plain = true })
+  if #parts == 10 then
+    return unpack(parts)
+  end
+  return record:match("^(%$%d+):(%%%d+):(%d+):(.-):(.-):(%d+):(%d+):(.-):(.-):(.*)")
+end
 
 ---@return sidekick.cli.terminal.Cmd?
 function M:attach()
@@ -87,11 +126,11 @@ function M.panes(opts)
   opts = opts or {}
   -- List all panes in current session with their command and cwd
   local cmd = opts.cmd or { "tmux", "list-panes", "-a", "-F", PANE_FORMAT }
-  local lines = Util.exec(cmd, { notify = opts.notify == true })
+  local lines, stdout = Util.exec(cmd, { notify = opts.notify == true })
   local panes = {} ---@type sidekick.tmux.Pane[]
-  for _, line in ipairs(lines or {}) do
+  for _, line in ipairs(pane_records(lines, stdout)) do
     local session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, layouts_title, cwd =
-      line:match("^(%$%d+):(%%%d+):(%d+):(.-):(.-):(%d+):(%d+):(.-):(.-):(.*)")
+      parse_pane_record(line)
     if id and pid and session_name and cwd then
       pid = assert(tonumber(pid), "invalid tmux pane_pid: " .. pid) --[[@as number]]
       ---@class sidekick.tmux.Pane
@@ -99,13 +138,13 @@ function M.panes(opts)
         skid = ("tmux %s"):format(pid), -- unique id for the pane
         pid = pid, -- process id of the pane
         id = id, -- tmux pane id
-        session_name = session_name,
+        session_name = clean_tmux_field(session_name),
         session_id = session_id,
-        window_name = window_name,
+        window_name = clean_tmux_field(window_name),
         window_index = window_index,
         pane_index = pane_index,
-        pane_label = pane_label,
-        layouts_title = layouts_title,
+        pane_label = clean_tmux_field(pane_label),
+        layouts_title = clean_tmux_field(layouts_title),
         cwd = cwd,
       }
     end
