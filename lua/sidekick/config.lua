@@ -255,12 +255,14 @@ function M.setup(opts)
         require("sidekick.cli").auto_attach({ focus = false })
       end
       if vim.v.vim_did_enter == 1 then
-        auto_attach()
+        vim.defer_fn(auto_attach, 100)
       else
         vim.api.nvim_create_autocmd("VimEnter", {
           group = M.augroup,
           once = true,
-          callback = auto_attach,
+          callback = function()
+            vim.defer_fn(auto_attach, 100)
+          end,
         })
       end
     end
