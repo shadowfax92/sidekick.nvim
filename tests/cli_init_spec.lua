@@ -6,25 +6,31 @@ local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
 describe("cli send defaults", function()
+  local original_comment_open
   local original_multicast
   local original_render
   local original_info
   local original_schedule
+  local original_warn
   local original_with
 
   before_each(function()
+    original_comment_open = require("sidekick.cli.ui.comment").open
     original_multicast = Config.cli.multicast
     original_render = Cli.render
     original_info = Util.info
     original_schedule = vim.schedule
+    original_warn = Util.warn
     original_with = State.with
   end)
 
   after_each(function()
+    require("sidekick.cli.ui.comment").open = original_comment_open
     Config.cli.multicast = original_multicast
     Cli.render = original_render
     Util.info = original_info
     vim.schedule = original_schedule
+    Util.warn = original_warn
     State.with = original_with
   end)
 
@@ -82,5 +88,51 @@ describe("cli send defaults", function()
       msg = "Sent line to 3 agents · /tmp/example.lua:L12-L18",
       opts = { timeout = 1000 },
     }, noted)
+  end)
+
+  it("send_with_comment captures the current file window before stale non-file windows", function()
+    local tmp = vim.fn.tempname() .. ".lua"
+    vim.fn.writefile({ "local foo = 1" }, tmp)
+
+    local file_buf = vim.fn.bufadd(tmp)
+    vim.fn.bufload(file_buf)
+    vim.bo[file_buf].buflisted = true
+
+    local file_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(file_win, file_buf)
+    vim.api.nvim_win_set_cursor(file_win, { 1, 0 })
+
+    local scratch_buf = vim.api.nvim_create_buf(false, true)
+    local scratch_win = vim.api.nvim_open_win(scratch_buf, false, {
+      relative = "editor",
+      width = 20,
+      height = 1,
+      row = 0,
+      col = 0,
+    })
+
+    vim.w[file_win].sidekick_visit = 1
+    vim.w[scratch_win].sidekick_visit = 2
+    vim.api.nvim_set_current_win(file_win)
+
+    local opened
+    local warned
+    require("sidekick.cli.ui.comment").open = function(opts)
+      opened = opts
+    end
+    Util.warn = function(msg)
+      warned = msg
+    end
+
+    Cli.send_with_comment({ msg = "{line}" })
+
+    assert.is_nil(warned)
+    assert.is_truthy(opened)
+    assert.is_truthy(opened.context_lines[1]:find(vim.fn.fnamemodify(tmp, ":t"), 1, true))
+
+    vim.api.nvim_win_close(scratch_win, true)
+    vim.api.nvim_buf_delete(scratch_buf, { force = true })
+    vim.api.nvim_buf_delete(file_buf, { force = true })
+    vim.fn.delete(tmp)
   end)
 end)

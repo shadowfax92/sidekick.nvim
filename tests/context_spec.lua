@@ -59,7 +59,7 @@ describe("context module", function()
       vim.api.nvim_buf_delete(term_buf, { force = true })
     end)
 
-    it("prefers most recently visited window", function()
+    it("prefers the most recently visited non-terminal window when current is sidekick_terminal", function()
       local buf2 = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_buf_set_lines(buf2, 0, -1, false, { "test" })
       local win2 = vim.api.nvim_open_win(buf2, false, {
@@ -73,10 +73,22 @@ describe("context module", function()
       -- Mark win2 as more recently visited
       vim.w[win2].sidekick_visit = vim.uv.hrtime() + 1000000000
 
+      local term_buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[term_buf].filetype = "sidekick_terminal"
+      local term_win = vim.api.nvim_open_win(term_buf, true, {
+        relative = "editor",
+        width = 50,
+        height = 10,
+        row = 11,
+        col = 0,
+      })
+
       local ctx = Context.ctx()
       assert.are.equal(win2, ctx.win)
       assert.are.equal(buf2, ctx.buf)
 
+      vim.api.nvim_win_close(term_win, true)
+      vim.api.nvim_buf_delete(term_buf, { force = true })
       vim.api.nvim_win_close(win2, true)
       vim.api.nvim_buf_delete(buf2, { force = true })
     end)
