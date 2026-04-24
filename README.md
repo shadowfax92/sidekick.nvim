@@ -1,6 +1,6 @@
 # sidekick.nvim (fork)
 
-Fork of [folke/sidekick.nvim](https://github.com/folke/sidekick.nvim) with enhanced tmux integration and send workflows.
+Personal fork of [folke/sidekick.nvim](https://github.com/folke/sidekick.nvim). All credit and thanks to [@folke](https://github.com/folke) — the original plugin does the heavy lifting; this fork just layers on a few tmux and send-workflow tweaks I wanted for my own multi-agent setup.
 
 For upstream docs, features, and configuration, see the [original README](https://github.com/folke/sidekick.nvim#readme).
 
