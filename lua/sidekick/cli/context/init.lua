@@ -11,22 +11,22 @@ local M = {}
 ---@type table<string, sidekick.context.Fn>
 M.context = {
   position = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "position" })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "position" })
   end,
   file = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "file" })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "file" })
   end,
   line = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "line" })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "line" })
   end,
   position_abs = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "position", absolute = true })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "position", absolute = true })
   end,
   file_abs = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "file", absolute = true })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "file", absolute = true })
   end,
   line_abs = function(ctx)
-    return Loc.is_file(ctx.buf) and Loc.get(ctx, { kind = "line", absolute = true })
+    return Loc.is_file(ctx.buf, ctx.cwd) and Loc.get(ctx, { kind = "line", absolute = true })
   end,
   this = function()
     -- this is not actually used.
@@ -35,7 +35,7 @@ M.context = {
   buffers = function(ctx)
     local ret = {} ---@type sidekick.Text[]
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if Loc.is_file(buf) then
+      if Loc.is_file(buf, ctx.cwd) then
         local file = Loc.get({ buf = buf, cwd = ctx.cwd }, { kind = "file" })[1]
         if file then
           table.insert(file, 1, { "- ", "@markup.list.markdown" })
@@ -172,7 +172,7 @@ function C:render(opts)
     -- * when ctx is an actual file, then {position} is used
     -- * otherwise it's replaced with `this` and a `{selection}` is appended
     -- * when in that case the user is not in visual mode, the message will be discarded
-    local this, did_this, c = Loc.is_file(self.ctx.buf) and "{position}" or "this", false, 0
+    local this, did_this, c = Loc.is_file(self.ctx.buf, self.ctx.cwd) and "{position}" or "this", false, 0
     for l in ipairs(lines) do
       lines[l], c = lines[l]:gsub("{this}", this)
       if c > 0 and this == "this" and not did_this then

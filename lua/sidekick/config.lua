@@ -148,6 +148,9 @@ local defaults = {
     --- Add custom context. See `lua/sidekick/context/init.lua`
     ---@type table<string, sidekick.context.Fn>
     context = {},
+    --- Resolve virtual buffers to real files for location contexts.
+    ---@type sidekick.context.FileResolver[]
+    file_resolvers = {},
     -- stylua: ignore
     ---@type table<string, sidekick.Prompt|string|fun(ctx:sidekick.context.ctx):(string?)>
     prompts = {
@@ -274,6 +277,7 @@ function M.setup(opts)
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
     M.validate("cli.mux.auto_attach.startup", "boolean")
+    M.validate("cli.file_resolvers", "table")
     M.validate("nes.diff.show", { "always", "cursor" })
   end)
 end

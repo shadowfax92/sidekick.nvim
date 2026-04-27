@@ -409,6 +409,46 @@ describe("context module", function()
       end)
     end)
 
+    describe("line", function()
+      it("renders line context from a configured file resolver", function()
+        local root = vim.fs.normalize(vim.fn.tempname())
+        local rel = "lua/plugins/diffview.lua"
+        local file = root .. "/" .. rel
+        vim.fn.mkdir(root .. "/lua/plugins", "p")
+        vim.fn.writefile({ "return {}" }, file)
+        vim.cmd("cd " .. vim.fn.fnameescape(root))
+
+        local diff_buf = vim.api.nvim_create_buf(false, false)
+        vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, { "return {}" })
+        vim.api.nvim_buf_set_name(diff_buf, "external://" .. rel)
+        vim.bo[diff_buf].buftype = "nowrite"
+        vim.bo[diff_buf].buflisted = false
+
+        local original_resolvers = Config.cli.file_resolvers
+        Config.cli.file_resolvers = {
+          function(ctx)
+            if ctx.name == "external://" .. rel then
+              return file
+            end
+          end,
+        }
+
+        vim.api.nvim_win_set_buf(win, diff_buf)
+        vim.api.nvim_win_set_cursor(win, { 1, 0 })
+        vim.w[win].sidekick_visit = vim.uv.hrtime()
+
+        local text = Context.get():render("{line}")
+
+        Config.cli.file_resolvers = original_resolvers
+        vim.api.nvim_buf_delete(diff_buf, { force = true })
+        vim.fn.delete(root, "rf")
+
+        assert.is_not_nil(text)
+        assert.is_true(text:find(rel, 1, true) ~= nil, text)
+        assert.is_true(text:find(":L1", 1, true) ~= nil, text)
+      end)
+    end)
+
     describe("file", function()
       it("returns file info for file buffer", function()
         local tmp = vim.fn.tempname() .. ".lua"
