@@ -59,6 +59,9 @@ M.commands = {
     prompt = function()
       require("sidekick.cli").prompt()
     end,
+    comment_drafts = function()
+      require("sidekick.cli").comment_drafts()
+    end,
   },
   debug = {
     nes = {

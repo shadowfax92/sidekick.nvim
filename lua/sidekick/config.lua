@@ -229,6 +229,12 @@ function M.setup(opts)
     end,
   })
 
+  vim.api.nvim_create_user_command("SidekickCommentDrafts", function()
+    require("sidekick.cli.comment_drafts").select()
+  end, {
+    desc = "Open recent Sidekick comment drafts",
+  })
+
   vim.schedule(function()
     vim.fn.mkdir(state_dir, "p")
     M.set_hl()

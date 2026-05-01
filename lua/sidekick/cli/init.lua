@@ -184,6 +184,11 @@ function M.prompt(opts)
   require("sidekick.cli.ui.prompt").select(opts)
 end
 
+--- Select a recent comment draft and open it for copying or resending.
+function M.comment_drafts()
+  require("sidekick.cli.comment_drafts").select()
+end
+
 --- Start or attach to a CLI tool
 ---@param opts? sidekick.cli.Select|{cb:nil}|{focus?:boolean}
 ---@overload fun(cb:fun(state?:sidekick.cli.State))
@@ -367,16 +372,20 @@ function M.send_with_comment(opts)
 
   require("sidekick.cli.ui.comment").open({
     context_lines = context_lines,
-    cb = function(comment)
+    cb = function(comment, draft)
       if not comment then
         return
       end
       local Text = require("sidekick.text")
-      -- prefix each comment line with > (blockquote)
       local quoted = comment:gsub("([^\n]+)", "> %1")
       local combined = Text.to_text(quoted)
       table.insert(combined, { { "" } })
       vim.list_extend(combined, text)
+      require("sidekick.cli.comment_drafts").mark_sent(
+        draft,
+        comment,
+        Text.to_string(combined)
+      )
       local notify = send_notifier(opts, msg, "comment")
 
       State.with(function(state)
