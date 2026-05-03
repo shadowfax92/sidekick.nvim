@@ -135,4 +135,34 @@ describe("cli send defaults", function()
     vim.api.nvim_buf_delete(file_buf, { force = true })
     vim.fn.delete(tmp)
   end)
+
+  it("send_with_comment uses visual selection when line context is unavailable", function()
+    local scratch_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(scratch_buf, 0, -1, false, {
+      "selected one",
+      "selected two",
+    })
+    local win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(win, scratch_buf)
+    vim.api.nvim_win_set_cursor(win, { 1, 0 })
+    vim.cmd("normal! V")
+    vim.api.nvim_win_set_cursor(win, { 2, 0 })
+
+    local opened
+    local warned
+    require("sidekick.cli.ui.comment").open = function(opts)
+      opened = opts
+    end
+    Util.warn = function(msg)
+      warned = msg
+    end
+
+    Cli.send_with_comment({ msg = "{line}" })
+
+    assert.is_nil(warned)
+    assert.is_truthy(opened)
+    assert.are.same({ "selected one", "selected two" }, opened.context_lines)
+
+    vim.api.nvim_buf_delete(scratch_buf, { force = true })
+  end)
 end)

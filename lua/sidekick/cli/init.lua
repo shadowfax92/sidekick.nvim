@@ -1,5 +1,6 @@
 local Context = require("sidekick.cli.context")
 local Config = require("sidekick.config")
+local Loc = require("sidekick.cli.context.location")
 local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
@@ -45,12 +46,24 @@ local M = {}
 ---@field [2] string|sidekick.cli.Action
 ---@field mode? string|string[]
 
---- Upgrade msg to {line} + {selection} when in visual mode
+--- Add visual selection context, using file locations only when the buffer can resolve to a file.
 ---@param opts {msg?:string, prompt?:string}
 local function resolve_visual_msg(opts)
   local mode = vim.api.nvim_get_mode().mode
   local is_visual = mode == "v" or mode == "V" or mode == "\22"
   if is_visual then
+    local buf = vim.api.nvim_get_current_buf()
+    local cwd = vim.fs.normalize(vim.fn.getcwd(0))
+    local has_file_context = Loc.is_file(buf, cwd)
+    if not has_file_context then
+      if not opts.msg and not opts.prompt then
+        opts.msg = "{selection}"
+      elseif opts.msg == "{line}" or opts.msg == "{line_abs}" then
+        opts.msg = "{selection}"
+      end
+      return
+    end
+
     if not opts.msg and not opts.prompt then
       opts.msg = "{line}\n```\n{selection}\n```"
     elseif opts.msg == "{line}" then
