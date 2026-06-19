@@ -19,6 +19,7 @@ describe("cli state routing", function()
   local original_sessions
   local original_schedule_wrap
   local original_terminal_get
+  local original_tmx_parent_pane
   local original_tools
 
   local function tool(name)
@@ -59,6 +60,7 @@ describe("cli state routing", function()
     original_sessions = Session.sessions
     original_schedule_wrap = vim.schedule_wrap
     original_terminal_get = require("sidekick.cli.terminal").get
+    original_tmx_parent_pane = Affinity.tmx_parent_pane
     original_tools = Config.tools
 
     Config.cli.mux.auto_attach = { on_demand = true, scope = "project", startup = true }
@@ -90,6 +92,7 @@ describe("cli state routing", function()
   after_each(function()
     Affinity.current_scope = original_current_scope
     Affinity.score = original_score
+    Affinity.tmx_parent_pane = original_tmx_parent_pane
     Config.cli.mux.auto_attach = original_auto_attach
     Config.tools = original_tools
     Session.attach = original_attach
@@ -123,6 +126,35 @@ describe("cli state routing", function()
     assert.is_true(scoped_1._attached)
     assert.is_true(scoped_2._attached)
     assert.is_false(outside._attached)
+  end)
+
+  it("auto_attaches only the unique tmx scratch parent when available", function()
+    local parent = session("codex", "parent")
+    local other = session("claude", "other")
+    Session.sessions = function()
+      return { parent, other }
+    end
+    Affinity.tmx_parent_pane = function()
+      return "%parent"
+    end
+    Affinity.score = function(_, s)
+      return {
+        exact_cwd = false,
+        same_git_root = true,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = s.id == "parent",
+        score = s.id == "parent" and 525 or 500,
+        badges = {},
+      }
+    end
+
+    local attached = State.auto_attach(nil, { multiple = true, scope = "project" })
+
+    assert.are.equal(1, #attached)
+    assert.are.equal("parent", attached[1].session.id)
+    assert.is_true(parent._attached)
+    assert.is_false(other._attached)
   end)
 
   it("multicast sends to every scoped session", function()

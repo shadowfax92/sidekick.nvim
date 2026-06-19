@@ -74,6 +74,18 @@ local function in_scope(states, kind)
 end
 
 ---@param states sidekick.cli.State[]
+---@return sidekick.cli.State[]?
+local function unique_tmx_parent(states)
+  if not Affinity.tmx_parent_pane() then
+    return
+  end
+  local matches = vim.tbl_filter(function(state)
+    return state.affinity and state.affinity.same_tmux_pane
+  end, states)
+  return #matches == 1 and matches or nil
+end
+
+---@param states sidekick.cli.State[]
 local function summarize(states)
   local counts = {} ---@type table<string, integer>
   for _, state in ipairs(states) do
@@ -226,6 +238,7 @@ end
 function M.auto_attach(filter, opts)
   opts = opts or {}
   local states = in_scope(M.get(Util.merge(filter, { started = true })), opts.scope or "project")
+  states = unique_tmx_parent(states) or states
   if #states == 0 then
     return {}
   end

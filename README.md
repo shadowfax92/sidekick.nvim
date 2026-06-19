@@ -10,6 +10,7 @@ See the [upstream README](https://github.com/folke/sidekick.nvim#readme) for eve
 
 - **Send with comment** — `cli.send_with_comment()` opens a multiline popup (via `Snacks.win`) so you can add a note before sending; the comment goes in as a blockquote above the context block
 - **Tmux multicast + auto-attach** — sends fan out to every matching agent in the project scope; auto-attach runs on `VimEnter`, on-demand, or via `cli.auto_attach()`
+- **tmx scratch affinity** — Neovim inside a `tmx` scratch pane prefers the parent pane's agent by default
 - **Better pane labels** — session picker shows `[tmux:session:1(editor).0(panda)]` with `window_name` and `@pane_label` when set, numeric index as fallback
 - **Absolute-path placeholders** — `{file_abs}`, `{line_abs}`, `{position_abs}` for when the agent runs outside the project cwd
 - **Richer visual sends** — selections include `@file :Lstart-Lend` and wrap code in a fenced block
@@ -28,6 +29,7 @@ See the [upstream README](https://github.com/folke/sidekick.nvim#readme) for eve
       mux = {
         backend = "tmux",
         enabled = true,
+        tmx_scratch = true,
         auto_attach = { startup = true, on_demand = true, scope = "project" },
       },
     },

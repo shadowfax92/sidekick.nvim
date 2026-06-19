@@ -109,9 +109,11 @@ local defaults = {
     ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
+    ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
     mux = {
       backend = vim.env.ZELLIJ and "zellij" or "tmux", -- default to tmux unless zellij is detected
       enabled = false,
+      tmx_scratch = true,
       -- terminal: new sessions will be created for each CLI tool and shown in a Neovim terminal
       -- window: when run inside a terminal multiplexer, new sessions will be created in a new tab
       -- split: when run inside a terminal multiplexer, new sessions will be created in a new split
@@ -283,6 +285,7 @@ function M.setup(opts)
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
     M.validate("cli.mux.auto_attach.startup", "boolean")
+    M.validate("cli.mux.tmx_scratch", "boolean")
     M.validate("cli.file_resolvers", "table")
     M.validate("nes.diff.show", { "always", "cursor" })
   end)

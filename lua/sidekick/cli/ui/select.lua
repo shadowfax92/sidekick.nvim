@@ -3,7 +3,7 @@ local Util = require("sidekick.util")
 
 ---@class sidekick.cli.Select: sidekick.cli.With
 ---@field cb fun(state?:sidekick.cli.State)
----@field auto? boolean Automatically select if only one tool matches the filter
+---@field auto? boolean Automatically select a single match or unique same-pane affinity match
 
 local M = {}
 
@@ -62,9 +62,18 @@ function M.select(opts)
   if #tools == 0 then
     Util.warn("No tools match the given filter")
     return
-  elseif #tools == 1 and opts.auto then
-    on_select(tools[1])
-    return
+  elseif opts.auto then
+    local same_pane = vim.tbl_filter(function(tool)
+      return tool.affinity and tool.affinity.same_tmux_pane
+    end, tools)
+    if #same_pane == 1 then
+      on_select(same_pane[1])
+      return
+    end
+    if #tools == 1 then
+      on_select(tools[1])
+      return
+    end
   end
 
   ---@type snacks.picker.ui_select.Opts
