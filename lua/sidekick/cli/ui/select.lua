@@ -4,7 +4,7 @@ local Util = require("sidekick.util")
 
 ---@class sidekick.cli.Select: sidekick.cli.With
 ---@field cb fun(state?:sidekick.cli.State)
----@field auto? boolean Automatically select if only one tool matches the filter
+---@field auto? boolean Automatically select a single match or unique tmx scratch parent candidate
 
 local M = {}
 

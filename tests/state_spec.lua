@@ -10,11 +10,20 @@ describe("cli state", function()
   local original_sessions
   local original_cwd
   local original_tools
+  local env_keys = { "TMX_SCRATCH", "TMX_PARENT_PANE" }
 
   local function set_env(values)
     for key, value in pairs(values) do
       vim.env[key] = value
     end
+  end
+
+  local function snapshot_env()
+    local values = {}
+    for _, key in ipairs(env_keys) do
+      values[key] = vim.env[key] or vim.NIL
+    end
+    return values
   end
 
   local function restore()
@@ -28,10 +37,7 @@ describe("cli state", function()
   end
 
   before_each(function()
-    env = {
-      TMX_SCRATCH = vim.env.TMX_SCRATCH,
-      TMX_PARENT_PANE = vim.env.TMX_PARENT_PANE,
-    }
+    env = snapshot_env()
     original_tmx_scratch = Config.cli.mux.tmx_scratch
     original_sessions = Session.sessions
     original_cwd = Session.cwd
