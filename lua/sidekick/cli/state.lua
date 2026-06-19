@@ -31,6 +31,22 @@ local M = {}
 ---@field attach? boolean
 ---@field all? boolean
 
+--- Resolve the parent pane Sidekick should prefer from inside a tmx scratch popup.
+---@return string?
+function M.tmx_parent_pane()
+  if Config.cli.mux.tmx_scratch ~= true or vim.env.TMX_SCRATCH ~= "1" then
+    return nil
+  end
+  local pane = vim.env.TMX_PARENT_PANE
+  return pane ~= "" and pane or nil
+end
+
+---@param t sidekick.cli.State
+function M.is_tmx_parent(t)
+  local pane = M.tmx_parent_pane()
+  return pane ~= nil and t.session ~= nil and t.session.tmux_pane_id == pane
+end
+
 ---@param t sidekick.cli.State
 ---@param filter? sidekick.cli.Filter
 function M.is(t, filter)
@@ -116,6 +132,11 @@ function M.get(filter)
   table.sort(ret, function(a, b)
     if a.installed ~= b.installed then
       return a.installed
+    end
+    local a_tmx_parent = M.is_tmx_parent(a)
+    local b_tmx_parent = M.is_tmx_parent(b)
+    if a_tmx_parent ~= b_tmx_parent then
+      return a_tmx_parent
     end
     -- sessions in cwd, or tools without a session
     local a_cwd = (not a.session or a.session.cwd == cwd or false)

@@ -82,9 +82,11 @@ local defaults = {
     },
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
+    ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
     mux = {
       backend = vim.env.ZELLIJ and "zellij" or "tmux", -- default to tmux unless zellij is detected
       enabled = false,
+      tmx_scratch = true,
       -- terminal: new sessions will be created for each CLI tool and shown in a Neovim terminal
       -- window: when run inside a terminal multiplexer, new sessions will be created in a new tab
       -- split: when run inside a terminal multiplexer, new sessions will be created in a new split
@@ -218,6 +220,7 @@ function M.setup(opts)
     require("sidekick.status").setup()
 
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
+    M.validate("cli.mux.tmx_scratch", "boolean")
     M.validate("cli.mux.backend", { "tmux", "zellij" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
     M.validate("nes.diff.show", { "always", "cursor" })
