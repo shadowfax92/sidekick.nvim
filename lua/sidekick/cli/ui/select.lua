@@ -1,4 +1,5 @@
 local Config = require("sidekick.config")
+local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
 ---@class sidekick.cli.Select: sidekick.cli.With
@@ -10,7 +11,7 @@ local M = {}
 ---@param opts sidekick.cli.Select
 function M.select(opts)
   assert(type(opts) == "table", "opts must be a table")
-  local tools = require("sidekick.cli.state").get(opts.filter)
+  local tools = State.get(opts.filter)
 
   ---@param state? sidekick.cli.State
   local on_select = function(state)
@@ -24,9 +25,16 @@ function M.select(opts)
   if #tools == 0 then
     Util.warn("No tools match the given filter")
     return
-  elseif #tools == 1 and opts.auto then
-    on_select(tools[1])
-    return
+  elseif opts.auto then
+    local tmx_parent = vim.tbl_filter(State.is_tmx_parent, tools)
+    if #tmx_parent == 1 then
+      on_select(tmx_parent[1])
+      return
+    end
+    if #tools == 1 then
+      on_select(tools[1])
+      return
+    end
   end
 
   ---@type snacks.picker.ui_select.Opts
