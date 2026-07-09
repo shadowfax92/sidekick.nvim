@@ -221,6 +221,46 @@ describe("cli state routing", function()
     assert.is_true(scoped._attached)
   end)
 
+  it("ranks running agents above startable tools, even outside the project", function()
+    local remote = session("claude", "remote")
+    remote.cwd = "/elsewhere"
+    Session.sessions = function()
+      return { remote }
+    end
+    Config.tools = function()
+      return { codex = { name = "codex", cmd = { "sh" } } }
+    end
+    Affinity.score = function()
+      return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+    end
+
+    local states = State.get()
+
+    assert.are.equal(2, #states)
+    assert.are.equal("claude", states[1].tool.name)
+    assert.is_not_nil(states[1].session)
+    assert.are.equal("codex", states[2].tool.name)
+    assert.is_nil(states[2].session)
+  end)
+
+  it("breaks affinity ties by tmux window activity", function()
+    local stale = session("claude", "stale")
+    local fresh = session("claude", "fresh")
+    stale.cwd, fresh.cwd = "/repo/current", "/repo/current"
+    stale.tmux_window_activity, fresh.tmux_window_activity = 100, 200
+    Session.sessions = function()
+      return { stale, fresh }
+    end
+    Affinity.score = function()
+      return { exact_cwd = true, same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 1500, badges = {} }
+    end
+
+    local states = State.get()
+
+    assert.are.equal("fresh", states[1].session.id)
+    assert.are.equal("stale", states[2].session.id)
+  end)
+
   it("falls back to scoped selection for single-target flows", function()
     local scoped_1 = session("claude", "scoped-1")
     local scoped_2 = session("codex", "scoped-2")

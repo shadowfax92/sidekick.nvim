@@ -40,6 +40,11 @@ local function affinity_score(state)
   return state.affinity and state.affinity.score or 0
 end
 
+--- Unix timestamp of the last activity in the session's tmux window, 0 when unknown.
+local function recency(state)
+  return state.session and state.session.tmux_window_activity or 0
+end
+
 local function auto_attach_config()
   return Config.cli.mux.auto_attach or {}
 end
@@ -202,14 +207,24 @@ function M.get(filter)
     if a.installed ~= b.installed then
       return a.installed
     end
+    -- a running agent is always a better answer than "start a new one", however
+    -- remote it is: without this, session-less tools win every affinity tiebreak
+    local a_running, b_running = a.session ~= nil, b.session ~= nil
+    if a_running ~= b_running then
+      return a_running
+    end
     if affinity_score(a) ~= affinity_score(b) then
       return affinity_score(a) > affinity_score(b)
     end
-    -- sessions in cwd, or tools without a session
-    local a_cwd = (not a.session or a.session.cwd == cwd or false)
-    local b_cwd = (not b.session or b.session.cwd == cwd or false)
-    if a_cwd ~= b_cwd then
-      return a_cwd
+    if a_running then
+      local a_cwd = a.session.cwd == cwd
+      local b_cwd = b.session.cwd == cwd
+      if a_cwd ~= b_cwd then
+        return a_cwd
+      end
+    end
+    if recency(a) ~= recency(b) then
+      return recency(a) > recency(b)
     end
     if a.started ~= b.started then
       return a.started
