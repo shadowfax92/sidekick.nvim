@@ -126,6 +126,15 @@ function M.current_tmux()
   end
 end
 
+--- Whether the session lives in a `tmx` scratch session, i.e. one of the floating
+--- popups `tmx` opens. They are named `gs/<type>/<id>` and can only be reached by
+--- re-opening the popup, never by switching a client into them.
+---@param session sidekick.cli.Session|sidekick.cli.session.State|nil
+function M.is_scratch(session)
+  local name = session and session.mux_session
+  return type(name) == "string" and name:sub(1, 3) == "gs/"
+end
+
 --- Resolve the tmx scratch parent pane Sidekick should treat as current.
 ---@return string?
 function M.tmx_parent_pane()

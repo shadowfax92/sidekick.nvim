@@ -398,6 +398,7 @@ Default settings ~
           external_started  = "󰖪 ",
           terminal_attached = " ",
           terminal_started  = " ",
+          popup             = "⧉ ",
         },
       },
       debug = false, -- enable debug logging

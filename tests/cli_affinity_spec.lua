@@ -69,6 +69,15 @@ describe("cli affinity", function()
     }, affinity.badges)
   end)
 
+  it("recognises tmx scratch sessions by their gs/ prefix", function()
+    assert.is_true(Affinity.is_scratch({ mux_session = "gs/nvim/7f3a" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "gs" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "logs/gs/x" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "MAIN" }))
+    assert.is_false(Affinity.is_scratch({}))
+    assert.is_false(Affinity.is_scratch(nil))
+  end)
+
   it("does not treat sibling worktrees as the same project", function()
     local projects = {
       ["/repo/.worktrees/task-a"] = { cwd = "/repo/.worktrees/task-a", worktree_root = "/repo/.worktrees/task-a", git_common_dir = "/repo/.git" },
