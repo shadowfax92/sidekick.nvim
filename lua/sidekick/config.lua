@@ -200,6 +200,7 @@ local defaults = {
       external_started  = "󰖪 ",
       terminal_attached = " ",
       terminal_started  = " ",
+      popup             = "⧉ ",
     },
   },
   debug = false, -- enable debug logging
@@ -365,9 +366,26 @@ function M.set_hl()
     LocNum = "@attribute",
     LocRow = "SidekickLocDelim",
     LocCol = "SidekickLocDelim",
+    PickerHint = "Comment",
+    PickerLoc = "Comment",
+    PickerPath = "Comment",
+    PickerTool = "Identifier",
+  }
+  -- Explicit colors rather than links: the agent picker shares a palette with the
+  -- `tmx` CLI pickers (current = green, popup = magenta, claude = coral, codex = cyan)
+  -- so the same agent reads the same in both. `default = true` keeps user overrides.
+  local colors = {
+    PickerCurrent = { fg = "#7fd88f" },
+    PickerLabel = { bold = true },
+    PickerPopup = { fg = "#c678dd" },
+    ToolClaude = { fg = "#d77757" },
+    ToolCodex = { fg = "#4fb8cc" },
   }
   for from, to in pairs(links) do
     vim.api.nvim_set_hl(0, "Sidekick" .. from, { link = to, default = true })
+  end
+  for from, hl in pairs(colors) do
+    vim.api.nvim_set_hl(0, "Sidekick" .. from, vim.tbl_extend("error", hl, { default = true }))
   end
 end
 

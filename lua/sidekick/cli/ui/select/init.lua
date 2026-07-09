@@ -206,7 +206,8 @@ function M.columns(state, opts)
 
   cols[#cols + 1] = { id = "badges", parts = pad_parts(badges(state), BADGE_WIDTH) }
 
-  local used = #cols -- one separator per column
+  -- `path` is still to come, so the row ends up with `#cols + 1` columns and `#cols` gaps
+  local used = #cols
   for _, col in ipairs(cols) do
     for _, part in ipairs(col.parts) do
       used = used + sw(part[1])
