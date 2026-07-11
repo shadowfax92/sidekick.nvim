@@ -109,7 +109,7 @@ local function pane_label(session)
   return ""
 end
 
----`session › window`, with the tokens matching the current pane's scope in green.
+---`session:window.pane`, with the tokens matching the current pane's scope in green.
 ---@param state sidekick.cli.State
 ---@return snacks.picker.Highlight[]
 local function location(state)
@@ -127,14 +127,11 @@ local function location(state)
     return ret
   end
 
-  ret[#ret + 1] = { truncate(mux, SESSION_WIDTH), hl(affinity.same_tmux_session) }
-  local window = session.tmux_window_name
-  if not window or window == "" then
-    window = session.tmux_window_index and tostring(session.tmux_window_index) or nil
-  end
-  if window and window ~= "" then
-    ret[#ret + 1] = { " › ", "SidekickPickerLoc" }
-    ret[#ret + 1] = { truncate(window, WINDOW_WIDTH), hl(affinity.same_tmux_window) }
+  ret[#ret + 1] = { mux, hl(affinity.same_tmux_session) }
+  if session.tmux_window_index and session.tmux_pane_index then
+    local pane = ("%s.%s"):format(session.tmux_window_index, session.tmux_pane_index)
+    ret[#ret + 1] = { ":", "SidekickPickerLoc" }
+    ret[#ret + 1] = { truncate(pane, WINDOW_WIDTH), hl(affinity.same_tmux_window) }
   end
   return ret
 end
@@ -148,7 +145,7 @@ local function badges(state)
   end
   for _, badge in ipairs(state.affinity and state.affinity.badges or {}) do
     -- `win`/`pane` affinity is already carried by the green tokens in the location column
-    if badge.text == "cwd" or badge.text == "root" then
+    if badge.text == "cwd" or badge.text == "root" or badge.text == "repo" then
       ret[#ret + 1] = { "[" .. badge.text .. "]", badge.hl }
       ret[#ret + 1] = { " " }
     end
@@ -233,10 +230,7 @@ end
 function M.select(opts)
   assert(type(opts) == "table", "opts must be a table")
   local State = require("sidekick.cli.state")
-  local tools = opts.scope and State.scoped(opts.filter, opts.scope) or State.get(opts.filter)
-  if opts.scope and #tools == 0 then
-    tools = State.get(opts.filter)
-  end
+  local tools = State.get(opts.filter)
 
   ---@param state? sidekick.cli.State
   local on_select = function(state)

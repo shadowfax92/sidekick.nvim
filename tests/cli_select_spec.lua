@@ -62,8 +62,15 @@ describe("cli select columns", function()
     local col = by_id(cols)
     assert.matches("codex", text(col.tool.parts))
     assert.matches("panda", text(col.label.parts))
-    assert.matches("MAIN › editor", text(col.loc.parts))
+    assert.matches("MAIN:1%.2", text(col.loc.parts))
     assert.matches("/tmp/project", text(col.path.parts))
+  end)
+
+  it("keeps the full tmux session coordinate visible", function()
+    local session = "sf_robust_cli_attach_codex"
+    local loc = by_id(columns(agent({ mux_session = session }))).loc
+
+    assert.matches(session .. ":1%.2", text(loc.parts))
   end)
 
   it("searches tool, label and location, but never the path", function()
@@ -111,12 +118,13 @@ describe("cli select columns", function()
     end
   end)
 
-  it("badges tmx scratch sessions and keeps only cwd/root affinity badges", function()
+  it("badges tmx scratch sessions and keeps cwd/root/repo affinity badges", function()
     local cols = columns(agent({ mux_session = "gs/nvim/7f3a" }, {
       affinity = {
         badges = {
           { text = "cwd", hl = "SidekickCliAffinityCwd" },
           { text = "root", hl = "SidekickCliAffinityRoot" },
+          { text = "repo", hl = "SidekickCliAffinityRepo" },
           { text = "win", hl = "SidekickCliAffinityWindow" },
           { text = "pane", hl = "SidekickCliAffinityPane" },
         },
@@ -126,6 +134,7 @@ describe("cli select columns", function()
     assert.matches("⧉", text(badges.parts))
     assert.matches("%[cwd%]", text(badges.parts))
     assert.matches("%[root%]", text(badges.parts))
+    assert.matches("%[repo%]", text(badges.parts))
     assert.is_nil(text(badges.parts):find("%[win%]"))
     assert.is_nil(text(badges.parts):find("%[pane%]"))
     assert.is_true(vim.tbl_contains(hls(badges.parts), "SidekickPickerPopup"))
@@ -150,7 +159,7 @@ describe("cli select formatter", function()
     local line = text(parts)
     assert.matches("codex", line)
     assert.matches("panda", line)
-    assert.matches("MAIN › editor", line)
+    assert.matches("MAIN:1%.2", line)
     assert.matches("%[cwd%]", line)
     assert.is_true(vim.tbl_contains(hls(parts), "SidekickCliAffinityCwd"))
     assert.is_true(vim.tbl_contains(hls(parts), "SidekickPickerLabel"))
@@ -183,13 +192,14 @@ describe("cli select routing", function()
     vim.ui.select = original_ui_select
   end)
 
-  it("falls back to the unscoped picker when scoped matches are empty", function()
+  it("always lists the unscoped ranked set even when scope has partial matches", function()
     local picked
     local all_tools = {
       { installed = true, tool = { name = "codex" } },
+      { installed = true, tool = { name = "claude" } },
     }
     State.scoped = function()
-      return {}
+      error("select must rank by affinity, never hard-filter scope")
     end
     State.get = function()
       return all_tools
