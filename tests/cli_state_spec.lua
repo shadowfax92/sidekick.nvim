@@ -21,6 +21,7 @@ describe("cli state routing", function()
   local original_terminal_get
   local original_tmx_parent_pane
   local original_tools
+  local original_warn
 
   local function tool(name)
     return { name = name }
@@ -42,6 +43,7 @@ describe("cli state routing", function()
       sid = name .. "-" .. id,
       started = true,
       tmux_pane_id = "%" .. id,
+      tmux_pane_index = "0",
       tmux_window_index = "1",
       tool = tool(name),
     }
@@ -62,6 +64,7 @@ describe("cli state routing", function()
     original_terminal_get = require("sidekick.cli.terminal").get
     original_tmx_parent_pane = Affinity.tmx_parent_pane
     original_tools = Config.tools
+    original_warn = Util.warn
 
     Config.cli.mux.auto_attach = { on_demand = true, scope = "project", startup = true }
     Config.tools = function()
@@ -101,6 +104,7 @@ describe("cli state routing", function()
     Session.sessions = original_sessions
     Util.info = original_info
     Util.notify = original_notify
+    Util.warn = original_warn
     vim.schedule_wrap = original_schedule_wrap
     require("sidekick.cli.terminal").get = original_terminal_get
     require("sidekick.cli.ui.select").select = original_select
@@ -126,6 +130,83 @@ describe("cli state routing", function()
     assert.is_true(scoped_1._attached)
     assert.is_true(scoped_2._attached)
     assert.is_false(outside._attached)
+  end)
+
+  it("suppresses viewers and reports every newly attached agent location", function()
+    local scoped_1 = session("claude", "scoped-1")
+    local scoped_2 = session("codex", "scoped-2")
+    local attach_opts = {}
+    local noted
+    Session.sessions = function()
+      return { scoped_1, scoped_2 }
+    end
+    Affinity.score = function()
+      return { exact_cwd = false, same_git_root = true, same_repo = true, score = 900, badges = {} }
+    end
+    Session.attach = function(s, opts)
+      attach_opts[#attach_opts + 1] = opts
+      s._attached = true
+      return s
+    end
+    Util.info = function(msg)
+      noted = msg
+    end
+
+    State.auto_attach(nil, { multiple = true, scope = "project" })
+
+    assert.are.same({ { viewer = false }, { viewer = false } }, attach_opts)
+    assert.are.equal(table.concat({
+      "Auto-attached 2 agents:",
+      "- **claude** `main:1.0` — /repo/scoped-1",
+      "- **codex** `main:1.0` — /repo/scoped-2",
+    }, "\n"), noted)
+  end)
+
+  it("reports visible agents outside explicit auto-attach scope", function()
+    local outside_1 = session("claude", "outside-1")
+    local outside_2 = session("codex", "outside-2")
+    local warned
+    Session.sessions = function()
+      return { outside_1, outside_2 }
+    end
+    Affinity.score = function()
+      return { exact_cwd = false, same_git_root = false, same_repo = false, score = 0, badges = {} }
+    end
+    Util.warn = function(msg)
+      warned = msg
+    end
+
+    local attached = State.auto_attach(nil, { multiple = true, notify_empty = true, scope = "project" })
+
+    assert.are.same({}, attached)
+    assert.are.equal(
+      'Auto-attach: no agents in `project` scope — 2 running elsewhere. Use require("sidekick.cli").select()',
+      warned
+    )
+  end)
+
+  it("keeps empty startup and on-demand auto-attach paths silent", function()
+    local outside = session("codex", "outside")
+    local messages = {}
+    Session.sessions = function()
+      return { outside }
+    end
+    Affinity.score = function()
+      return { exact_cwd = false, same_git_root = false, same_repo = false, score = 0, badges = {} }
+    end
+    Util.info = function(msg)
+      messages[#messages + 1] = msg
+    end
+    Util.warn = function(msg)
+      messages[#messages + 1] = msg
+    end
+
+    assert.are.same({}, State.auto_attach(nil, { multiple = true, scope = "project" }))
+    Session.sessions = function()
+      return {}
+    end
+    assert.are.same({}, State.auto_attach(nil, { multiple = true, notify_empty = true, scope = "project" }))
+    assert.are.same({}, messages)
   end)
 
   it("auto_attaches only the unique tmx scratch parent when available", function()

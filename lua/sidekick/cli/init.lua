@@ -29,6 +29,7 @@ local M = {}
 ---@field focus? boolean
 ---@field filter? sidekick.cli.Filter
 ---@field all? boolean
+---@field notify_empty? boolean
 ---@field scope? "cwd"|"project"|"all"
 
 ---@class sidekick.cli.Hide
@@ -223,6 +224,7 @@ function M.auto_attach(opts)
   return State.auto_attach(opts.filter, {
     focus = opts.focus,
     multiple = true,
+    notify_empty = opts.notify_empty ~= false,
     scope = opts.scope,
     show = true,
   })

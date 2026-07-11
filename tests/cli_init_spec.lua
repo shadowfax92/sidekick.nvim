@@ -166,3 +166,39 @@ describe("cli send defaults", function()
     vim.api.nvim_buf_delete(scratch_buf, { force = true })
   end)
 end)
+
+describe("cli auto-attach notifications", function()
+  local original_auto_attach
+
+  before_each(function()
+    original_auto_attach = State.auto_attach
+  end)
+
+  after_each(function()
+    State.auto_attach = original_auto_attach
+  end)
+
+  it("enables the honest zero summary for direct calls", function()
+    local called
+    State.auto_attach = function(_, opts)
+      called = opts
+      return {}
+    end
+
+    Cli.auto_attach({ focus = false })
+
+    assert.is_true(called.notify_empty)
+  end)
+
+  it("allows startup callers to suppress the zero summary", function()
+    local called
+    State.auto_attach = function(_, opts)
+      called = opts
+      return {}
+    end
+
+    Cli.auto_attach({ focus = false, notify_empty = false })
+
+    assert.is_false(called.notify_empty)
+  end)
+end)

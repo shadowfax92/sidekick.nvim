@@ -273,7 +273,7 @@ function M.setup(opts)
 
     if config.cli.mux.enabled and config.cli.mux.auto_attach.startup then
       local auto_attach = function()
-        require("sidekick.cli").auto_attach({ focus = false })
+        require("sidekick.cli").auto_attach({ focus = false, notify_empty = false })
       end
       if vim.v.vim_did_enter == 1 then
         vim.defer_fn(auto_attach, 100)

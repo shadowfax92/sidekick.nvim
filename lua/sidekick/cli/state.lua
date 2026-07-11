@@ -90,19 +90,16 @@ local function unique_tmx_parent(states)
   return #matches == 1 and matches or nil
 end
 
----@param states sidekick.cli.State[]
-local function summarize(states)
-  local counts = {} ---@type table<string, integer>
-  for _, state in ipairs(states) do
-    if state.tool then
-      counts[state.tool.name] = (counts[state.tool.name] or 0) + 1
-    end
+---@param state sidekick.cli.State
+local function auto_attach_summary(state)
+  local session = state.session
+  session = session and (session.parent or session) or nil
+  local location = session and (session.mux_session or session.backend) or "unknown"
+  if session and session.tmux_window_index and session.tmux_pane_index then
+    location = ("%s:%s.%s"):format(location, session.tmux_window_index, session.tmux_pane_index)
   end
-  local names = vim.tbl_keys(counts)
-  table.sort(names)
-  return table.concat(vim.tbl_map(function(name)
-    return ("%d %s"):format(counts[name], name)
-  end, names), ", ")
+  local cwd = session and vim.fn.fnamemodify(session.cwd, ":~") or "unknown cwd"
+  return ("- **%s** `%s` — %s"):format(state.tool.name, location, cwd)
 end
 
 ---@param states sidekick.cli.State[]
@@ -248,15 +245,23 @@ function M.scoped(filter, scope)
 end
 
 ---@param filter? sidekick.cli.Filter
----@param opts? {scope?:"cwd"|"project"|"all", show?:boolean, focus?:boolean, multiple?:boolean}
+---@param opts? {scope?:"cwd"|"project"|"all", show?:boolean, focus?:boolean, multiple?:boolean, notify_empty?:boolean}
 ---@return sidekick.cli.State[]
 function M.auto_attach(filter, opts)
   opts = opts or {}
-  local states = in_scope(M.get(Util.merge(filter, { started = true })), opts.scope or "project")
-  states = unique_tmx_parent(states) or states
+  local scope = opts.scope or "project"
+  local all_states = M.get(Util.merge(filter, { started = true }))
+  local states = in_scope(all_states, scope)
+  local outside = #all_states - #states
   if #states == 0 then
+    if opts.notify_empty and outside > 0 then
+      Util.warn((
+        'Auto-attach: no agents in `%s` scope — %d running elsewhere. Use require("sidekick.cli").select()'
+      ):format(scope, outside))
+    end
     return {}
   end
+  states = unique_tmx_parent(states) or states
   if opts.multiple == false and #states ~= 1 then
     return {}
   end
@@ -264,19 +269,17 @@ function M.auto_attach(filter, opts)
   local attached = {} ---@type sidekick.cli.State[]
   local newly_attached = {} ---@type sidekick.cli.State[]
   for _, state in ipairs(states) do
-    local ret, did_attach = M.attach(state, { show = opts.show, focus = opts.focus, notify = false })
+    local ret, did_attach = M.attach(state, { show = opts.show, focus = opts.focus, notify = false, viewer = false })
     attached[#attached + 1] = ret
     if did_attach then
-      newly_attached[#newly_attached + 1] = ret
+      newly_attached[#newly_attached + 1] = state
     end
   end
 
   if #newly_attached > 0 then
-    Util.info(("Auto-attached %d agent%s (%s)"):format(
-      #newly_attached,
-      #newly_attached == 1 and "" or "s",
-      summarize(newly_attached)
-    ))
+    local lines = { ("Auto-attached %d agent%s:"):format(#newly_attached, #newly_attached == 1 and "" or "s") }
+    vim.list_extend(lines, vim.tbl_map(auto_attach_summary, newly_attached))
+    Util.info(table.concat(lines, "\n"))
   end
 
   return attached
