@@ -1,7 +1,9 @@
+local ProcMatch = require("sidekick.cli.proc_match")
+
 ---@type sidekick.cli.Config
 return {
   cmd = { "claude" },
-  is_proc = "\\<claude\\>",
+  is_proc = ProcMatch.executable("claude"),
   url = "https://github.com/anthropics/claude-code",
   resume = { "--resume" },
   continue = { "--continue" },

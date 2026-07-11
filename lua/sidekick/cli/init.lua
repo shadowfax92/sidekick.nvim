@@ -1,5 +1,6 @@
 local Context = require("sidekick.cli.context")
 local Config = require("sidekick.config")
+local Loc = require("sidekick.cli.context.location")
 local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
@@ -45,12 +46,24 @@ local M = {}
 ---@field [2] string|sidekick.cli.Action
 ---@field mode? string|string[]
 
---- Upgrade msg to {line} + {selection} when in visual mode
+--- Add visual selection context, using file locations only when the buffer can resolve to a file.
 ---@param opts {msg?:string, prompt?:string}
 local function resolve_visual_msg(opts)
   local mode = vim.api.nvim_get_mode().mode
   local is_visual = mode == "v" or mode == "V" or mode == "\22"
   if is_visual then
+    local buf = vim.api.nvim_get_current_buf()
+    local cwd = vim.fs.normalize(vim.fn.getcwd(0))
+    local has_file_context = Loc.is_file(buf, cwd)
+    if not has_file_context then
+      if not opts.msg and not opts.prompt then
+        opts.msg = "{selection}"
+      elseif opts.msg == "{line}" or opts.msg == "{line_abs}" then
+        opts.msg = "{selection}"
+      end
+      return
+    end
+
     if not opts.msg and not opts.prompt then
       opts.msg = "{line}\n```\n{selection}\n```"
     elseif opts.msg == "{line}" then
@@ -182,6 +195,11 @@ function M.prompt(opts)
     end
   end
   require("sidekick.cli.ui.prompt").select(opts)
+end
+
+--- Select a recent comment draft and open it for copying or resending.
+function M.comment_drafts()
+  require("sidekick.cli.comment_drafts").select()
 end
 
 --- Start or attach to a CLI tool
@@ -367,16 +385,20 @@ function M.send_with_comment(opts)
 
   require("sidekick.cli.ui.comment").open({
     context_lines = context_lines,
-    cb = function(comment)
+    cb = function(comment, draft)
       if not comment then
         return
       end
       local Text = require("sidekick.text")
-      -- prefix each comment line with > (blockquote)
       local quoted = comment:gsub("([^\n]+)", "> %1")
       local combined = Text.to_text(quoted)
       table.insert(combined, { { "" } })
       vim.list_extend(combined, text)
+      require("sidekick.cli.comment_drafts").mark_sent(
+        draft,
+        comment,
+        Text.to_string(combined)
+      )
       local notify = send_notifier(opts, msg, "comment")
 
       State.with(function(state)

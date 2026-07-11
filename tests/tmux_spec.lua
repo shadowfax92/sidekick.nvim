@@ -27,6 +27,7 @@ describe("tmux session parser", function()
       "0",
       "",
       "auctor e2e\npaperclip.1.1 akita",
+      "1783619633",
       "/Users/felarof01/Workspaces/build/COMPANY_ADMIN/auctor-v4",
     }, field_sep) .. record_sep .. "\n"
 
@@ -46,6 +47,7 @@ describe("tmux session parser", function()
     assert.are.equal("@build_work_weave-v04", panes[1].session_name)
     assert.are.equal("auctor e2e", panes[1].window_name)
     assert.are.equal("auctor e2e paperclip.1.1 akita", panes[1].layouts_title)
+    assert.are.equal(1783619633, panes[1].window_activity)
     assert.are.equal("/Users/felarof01/Workspaces/build/COMPANY_ADMIN/auctor-v4", panes[1].cwd)
   end)
 end)

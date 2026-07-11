@@ -109,9 +109,11 @@ local defaults = {
     ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
+    ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
     mux = {
       backend = vim.env.ZELLIJ and "zellij" or "tmux", -- default to tmux unless zellij is detected
       enabled = false,
+      tmx_scratch = true,
       -- terminal: new sessions will be created for each CLI tool and shown in a Neovim terminal
       -- window: when run inside a terminal multiplexer, new sessions will be created in a new tab
       -- split: when run inside a terminal multiplexer, new sessions will be created in a new split
@@ -148,6 +150,9 @@ local defaults = {
     --- Add custom context. See `lua/sidekick/context/init.lua`
     ---@type table<string, sidekick.context.Fn>
     context = {},
+    --- Resolve virtual buffers to real files for location contexts.
+    ---@type sidekick.context.FileResolver[]
+    file_resolvers = {},
     -- stylua: ignore
     ---@type table<string, sidekick.Prompt|string|fun(ctx:sidekick.context.ctx):(string?)>
     prompts = {
@@ -195,6 +200,7 @@ local defaults = {
       external_started  = "󰖪 ",
       terminal_attached = " ",
       terminal_started  = " ",
+      popup             = "⧉ ",
     },
   },
   debug = false, -- enable debug logging
@@ -226,6 +232,12 @@ function M.setup(opts)
     end,
   })
 
+  vim.api.nvim_create_user_command("SidekickCommentDrafts", function()
+    require("sidekick.cli.comment_drafts").select()
+  end, {
+    desc = "Open recent Sidekick comment drafts",
+  })
+
   vim.schedule(function()
     vim.fn.mkdir(state_dir, "p")
     M.set_hl()
@@ -255,12 +267,14 @@ function M.setup(opts)
         require("sidekick.cli").auto_attach({ focus = false })
       end
       if vim.v.vim_did_enter == 1 then
-        auto_attach()
+        vim.defer_fn(auto_attach, 100)
       else
         vim.api.nvim_create_autocmd("VimEnter", {
           group = M.augroup,
           once = true,
-          callback = auto_attach,
+          callback = function()
+            vim.defer_fn(auto_attach, 100)
+          end,
         })
       end
     end
@@ -272,6 +286,8 @@ function M.setup(opts)
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
     M.validate("cli.mux.auto_attach.startup", "boolean")
+    M.validate("cli.mux.tmx_scratch", "boolean")
+    M.validate("cli.file_resolvers", "table")
     M.validate("nes.diff.show", { "always", "cursor" })
   end)
 end
@@ -350,9 +366,26 @@ function M.set_hl()
     LocNum = "@attribute",
     LocRow = "SidekickLocDelim",
     LocCol = "SidekickLocDelim",
+    PickerHint = "Comment",
+    PickerLoc = "Comment",
+    PickerPath = "Comment",
+    PickerTool = "Identifier",
+  }
+  -- Explicit colors rather than links: the agent picker shares a palette with the
+  -- `tmx` CLI pickers (current = green, popup = magenta, claude = coral, codex = cyan)
+  -- so the same agent reads the same in both. `default = true` keeps user overrides.
+  local colors = {
+    PickerCurrent = { fg = "#7fd88f" },
+    PickerLabel = { bold = true },
+    PickerPopup = { fg = "#c678dd" },
+    ToolClaude = { fg = "#d77757" },
+    ToolCodex = { fg = "#4fb8cc" },
   }
   for from, to in pairs(links) do
     vim.api.nvim_set_hl(0, "Sidekick" .. from, { link = to, default = true })
+  end
+  for from, hl in pairs(colors) do
+    vim.api.nvim_set_hl(0, "Sidekick" .. from, vim.tbl_extend("error", hl, { default = true }))
   end
 end
 

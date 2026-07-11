@@ -13,6 +13,47 @@ local M = {}
 ---@field absolute? boolean
 
 ---@param ctx sidekick.context.Loc|sidekick.context.ctx
+---@return string
+local function raw_name(ctx)
+  return ctx.name or (ctx.buf and vim.api.nvim_buf_get_name(ctx.buf)) or ""
+end
+
+---@param ctx sidekick.context.Loc|sidekick.context.ctx
+---@return string?
+function M.resolve(ctx)
+  local name = raw_name(ctx)
+  if
+    ctx.buf
+    and name ~= ""
+    and vim.bo[ctx.buf].buflisted
+    and vim.tbl_contains({ "", "help" }, vim.bo[ctx.buf].buftype)
+    and vim.fn.filereadable(name) == 1
+  then
+    return vim.fs.normalize(name)
+  end
+
+  local resolver_ctx = vim.tbl_extend("force", {}, ctx, { name = name })
+  for _, resolver in ipairs(require("sidekick.config").cli.file_resolvers or {}) do
+    local ok, resolved = pcall(resolver, resolver_ctx)
+    if ok and type(resolved) == "string" and resolved ~= "" then
+      return vim.fs.normalize(resolved)
+    end
+  end
+end
+
+---@param ctx sidekick.context.Loc|sidekick.context.ctx
+---@return string
+function M.name(ctx)
+  local resolved = M.resolve(ctx)
+  if resolved then
+    return resolved
+  end
+
+  local name = ctx.name or vim.api.nvim_buf_get_name(ctx.buf)
+  return name and name ~= "" and name or "[No Name]"
+end
+
+---@param ctx sidekick.context.Loc|sidekick.context.ctx
 ---@param opts? sidekick.context.loc.Opts
 ---@return sidekick.Text[]
 function M.get(ctx, opts)
@@ -20,12 +61,10 @@ function M.get(ctx, opts)
   opts.kind = opts.kind or "position"
   assert(ctx.buf or ctx.name, "Either buf or name must be provided")
 
-  local name = ctx.name or vim.api.nvim_buf_get_name(ctx.buf)
-  if not name or name == "" then
-    name = "[No Name]"
-  elseif opts.absolute then
+  local name = M.name(ctx)
+  if name ~= "[No Name]" and opts.absolute then
     name = vim.fs.normalize(name)
-  else
+  elseif name ~= "[No Name]" then
     local cwd = ctx.cwd or vim.fn.getcwd(0)
     local ok, rel = pcall(vim.fs.relpath, cwd, name)
     if ok and rel and rel ~= "" and rel ~= "." then
@@ -88,10 +127,9 @@ function M.get(ctx, opts)
 end
 
 ---@param buf integer
-function M.is_file(buf)
-  return vim.bo[buf].buflisted
-    and vim.tbl_contains({ "", "help" }, vim.bo[buf].buftype)
-    and vim.fn.filereadable(vim.api.nvim_buf_get_name(buf)) == 1
+---@param cwd? string
+function M.is_file(buf, cwd)
+  return M.resolve({ buf = buf, cwd = cwd }) ~= nil
 end
 
 return M

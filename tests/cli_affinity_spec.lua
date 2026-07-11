@@ -1,16 +1,37 @@
 ---@module 'luassert'
 
 local Affinity = require("sidekick.cli.affinity")
+local Config = require("sidekick.config")
+local Session = require("sidekick.cli.session")
+local Tmux = require("sidekick.cli.session.tmux")
 
 describe("cli affinity", function()
+  local env_keys = { "TMUX_PANE", "TMX_PARENT_PANE", "TMX_SCRATCH" }
+  local original_cwd
   local original_project
+  local original_panes
+  local original_tmx_scratch
+  local original_env
 
   before_each(function()
+    original_cwd = Session.cwd
     original_project = Affinity.project
+    original_panes = Tmux.panes
+    original_tmx_scratch = Config.cli.mux.tmx_scratch
+    original_env = {}
+    for _, key in ipairs(env_keys) do
+      original_env[key] = vim.env[key] or vim.NIL
+    end
   end)
 
   after_each(function()
+    Session.cwd = original_cwd
     Affinity.project = original_project
+    Tmux.panes = original_panes
+    Config.cli.mux.tmx_scratch = original_tmx_scratch
+    for key, value in pairs(original_env) do
+      vim.env[key] = value
+    end
     Affinity.reset()
   end)
 
@@ -46,6 +67,15 @@ describe("cli affinity", function()
       { text = "root", hl = "SidekickCliAffinityRoot" },
       { text = "win", hl = "SidekickCliAffinityWindow" },
     }, affinity.badges)
+  end)
+
+  it("recognises tmx scratch sessions by their gs/ prefix", function()
+    assert.is_true(Affinity.is_scratch({ mux_session = "gs/nvim/7f3a" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "gs" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "logs/gs/x" }))
+    assert.is_false(Affinity.is_scratch({ mux_session = "MAIN" }))
+    assert.is_false(Affinity.is_scratch({}))
+    assert.is_false(Affinity.is_scratch(nil))
   end)
 
   it("does not treat sibling worktrees as the same project", function()
@@ -100,5 +130,55 @@ describe("cli affinity", function()
       { text = "cwd", hl = "SidekickCliAffinityCwd" },
       { text = "root", hl = "SidekickCliAffinityRoot" },
     }, affinity.badges)
+  end)
+
+  it("uses the tmx scratch parent pane as the current tmux pane", function()
+    Config.cli.mux.tmx_scratch = true
+    vim.env.TMUX_PANE = "%scratch"
+    vim.env.TMX_SCRATCH = "1"
+    vim.env.TMX_PARENT_PANE = "%16"
+    Session.cwd = function()
+      return "/repo/app"
+    end
+    Affinity.project = function(path)
+      return { cwd = path }
+    end
+    Tmux.panes = function()
+      return {
+        { id = "%scratch", session_name = "gs/sh/%scratch", window_index = "1" },
+        { id = "%16", session_name = "main", window_index = "3" },
+      }
+    end
+
+    local scope = Affinity.current_scope()
+
+    assert.are.equal("%16", scope.tmux_pane_id)
+    assert.are.equal("main", scope.tmux_session)
+    assert.are.equal("3", scope.tmux_window_index)
+  end)
+
+  it("keeps the real tmux pane when tmx scratch support is disabled", function()
+    Config.cli.mux.tmx_scratch = false
+    vim.env.TMUX_PANE = "%scratch"
+    vim.env.TMX_SCRATCH = "1"
+    vim.env.TMX_PARENT_PANE = "%16"
+    Session.cwd = function()
+      return "/repo/app"
+    end
+    Affinity.project = function(path)
+      return { cwd = path }
+    end
+    Tmux.panes = function()
+      return {
+        { id = "%scratch", session_name = "gs/sh/%scratch", window_index = "1" },
+        { id = "%16", session_name = "main", window_index = "3" },
+      }
+    end
+
+    local scope = Affinity.current_scope()
+
+    assert.are.equal("%scratch", scope.tmux_pane_id)
+    assert.are.equal("gs/sh/%scratch", scope.tmux_session)
+    assert.are.equal("1", scope.tmux_window_index)
   end)
 end)

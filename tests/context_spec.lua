@@ -59,7 +59,7 @@ describe("context module", function()
       vim.api.nvim_buf_delete(term_buf, { force = true })
     end)
 
-    it("prefers most recently visited window", function()
+    it("prefers the most recently visited non-terminal window when current is sidekick_terminal", function()
       local buf2 = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_buf_set_lines(buf2, 0, -1, false, { "test" })
       local win2 = vim.api.nvim_open_win(buf2, false, {
@@ -73,10 +73,22 @@ describe("context module", function()
       -- Mark win2 as more recently visited
       vim.w[win2].sidekick_visit = vim.uv.hrtime() + 1000000000
 
+      local term_buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[term_buf].filetype = "sidekick_terminal"
+      local term_win = vim.api.nvim_open_win(term_buf, true, {
+        relative = "editor",
+        width = 50,
+        height = 10,
+        row = 11,
+        col = 0,
+      })
+
       local ctx = Context.ctx()
       assert.are.equal(win2, ctx.win)
       assert.are.equal(buf2, ctx.buf)
 
+      vim.api.nvim_win_close(term_win, true)
+      vim.api.nvim_buf_delete(term_buf, { force = true })
       vim.api.nvim_win_close(win2, true)
       vim.api.nvim_buf_delete(buf2, { force = true })
     end)
@@ -394,6 +406,46 @@ describe("context module", function()
         local result = Context.context.position(ctx_data)
         -- Context functions use 'and' operator which returns false when is_file() is false
         assert.is_false(result)
+      end)
+    end)
+
+    describe("line", function()
+      it("renders line context from a configured file resolver", function()
+        local root = vim.fs.normalize(vim.fn.tempname())
+        local rel = "lua/plugins/diffview.lua"
+        local file = root .. "/" .. rel
+        vim.fn.mkdir(root .. "/lua/plugins", "p")
+        vim.fn.writefile({ "return {}" }, file)
+        vim.cmd("cd " .. vim.fn.fnameescape(root))
+
+        local diff_buf = vim.api.nvim_create_buf(false, false)
+        vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, { "return {}" })
+        vim.api.nvim_buf_set_name(diff_buf, "external://" .. rel)
+        vim.bo[diff_buf].buftype = "nowrite"
+        vim.bo[diff_buf].buflisted = false
+
+        local original_resolvers = Config.cli.file_resolvers
+        Config.cli.file_resolvers = {
+          function(ctx)
+            if ctx.name == "external://" .. rel then
+              return file
+            end
+          end,
+        }
+
+        vim.api.nvim_win_set_buf(win, diff_buf)
+        vim.api.nvim_win_set_cursor(win, { 1, 0 })
+        vim.w[win].sidekick_visit = vim.uv.hrtime()
+
+        local text = Context.get():render("{line}")
+
+        Config.cli.file_resolvers = original_resolvers
+        vim.api.nvim_buf_delete(diff_buf, { force = true })
+        vim.fn.delete(root, "rf")
+
+        assert.is_not_nil(text)
+        assert.is_true(text:find(rel, 1, true) ~= nil, text)
+        assert.is_true(text:find(":L1", 1, true) ~= nil, text)
       end)
     end)
 

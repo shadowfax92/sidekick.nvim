@@ -1,3 +1,4 @@
+local Config = require("sidekick.config")
 local Session = require("sidekick.cli.session")
 local Util = require("sidekick.util")
 
@@ -110,7 +111,8 @@ end
 
 ---@return sidekick.tmux.Pane?
 function M.current_tmux()
-  if not vim.env.TMUX_PANE then
+  local pane_id = M.tmx_parent_pane() or vim.env.TMUX_PANE
+  if not pane_id then
     return
   end
   local ok, Tmux = pcall(require, "sidekick.cli.session.tmux")
@@ -118,21 +120,41 @@ function M.current_tmux()
     return
   end
   for _, pane in ipairs(Tmux.panes({ notify = false })) do
-    if pane.id == vim.env.TMUX_PANE then
+    if pane.id == pane_id then
       return pane
     end
   end
 end
 
+--- Whether the session lives in a `tmx` scratch session, i.e. one of the floating
+--- popups `tmx` opens. They are named `gs/<type>/<id>` and can only be reached by
+--- re-opening the popup, never by switching a client into them.
+---@param session sidekick.cli.Session|sidekick.cli.session.State|nil
+function M.is_scratch(session)
+  local name = session and session.mux_session
+  return type(name) == "string" and name:sub(1, 3) == "gs/"
+end
+
+--- Resolve the tmx scratch parent pane Sidekick should treat as current.
+---@return string?
+function M.tmx_parent_pane()
+  if Config.cli.mux.tmx_scratch ~= true or vim.env.TMX_SCRATCH ~= "1" then
+    return
+  end
+  local pane = vim.env.TMX_PARENT_PANE
+  return pane ~= "" and pane or nil
+end
+
 ---@return sidekick.cli.Scope
 function M.current_scope()
+  local parent_pane = M.tmx_parent_pane()
   local pane = M.current_tmux()
   return {
     cwd = Session.cwd(),
     project = M.project(Session.cwd()),
     tmux_session = pane and pane.session_name or nil,
     tmux_window_index = pane and pane.window_index or nil,
-    tmux_pane_id = pane and pane.id or vim.env.TMUX_PANE or nil,
+    tmux_pane_id = pane and pane.id or parent_pane or vim.env.TMUX_PANE or nil,
   }
 end
 

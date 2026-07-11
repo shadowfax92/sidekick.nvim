@@ -7,6 +7,8 @@ local Util = require("sidekick.util")
 local M = {}
 M.__index = M
 
+-- `window_activity` is a unix timestamp; tmux has no pane-level equivalent, so this
+-- is the finest-grained recency signal available for ranking panes in the picker.
 local FIELD_SEP = "\tSIDEKICK_FIELD\t"
 local RECORD_SEP = "\tSIDEKICK_RECORD\t"
 local PANE_FORMAT =
@@ -20,6 +22,7 @@ local PANE_FORMAT =
     "#{pane_index}",
     "#{@pane_label}",
     "#{@layouts_title}",
+    "#{window_activity}",
     "#{?pane_current_path,#{pane_current_path},#{pane_start_path}}",
   }, FIELD_SEP) .. RECORD_SEP
 
@@ -43,10 +46,12 @@ end
 ---@param record string
 local function parse_pane_record(record)
   local parts = vim.split(record, FIELD_SEP, { plain = true })
-  if #parts == 10 then
+  if #parts == 11 then
     return unpack(parts)
   end
-  return record:match("^(%$%d+):(%%%d+):(%d+):(.-):(.-):(%d+):(%d+):(.-):(.-):(.*)")
+  local session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, activity, cwd =
+    record:match("^(%$%d+):(%%%d+):(%d+):(.-):(.-):(%d+):(%d+):(.-):(%d*):(.*)")
+  return session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, nil, activity, cwd
 end
 
 ---@return sidekick.cli.terminal.Cmd?
@@ -129,7 +134,7 @@ function M.panes(opts)
   local lines, stdout = Util.exec(cmd, { notify = opts.notify == true })
   local panes = {} ---@type sidekick.tmux.Pane[]
   for _, line in ipairs(pane_records(lines, stdout)) do
-    local session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, layouts_title, cwd =
+    local session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, layouts_title, activity, cwd =
       parse_pane_record(line)
     if id and pid and session_name and cwd then
       pid = assert(tonumber(pid), "invalid tmux pane_pid: " .. pid) --[[@as number]]
@@ -145,11 +150,43 @@ function M.panes(opts)
         pane_index = pane_index,
         pane_label = clean_tmux_field(pane_label),
         layouts_title = clean_tmux_field(layouts_title),
+        window_activity = tonumber(activity) or 0,
         cwd = cwd,
       }
     end
   end
   return panes
+end
+
+--- Move the current tmux client to the pane hosting `session`.
+--- `tmx` scratch sessions only exist behind a popup, so re-open the popup the way
+--- `tmx` does instead of switching a client into them. `display-popup` blocks until
+--- the popup closes, hence the async spawn.
+---@param session sidekick.cli.session.State
+---@return boolean focused
+function M.focus(session)
+  if not vim.env.TMUX then
+    Util.warn("Not running inside tmux")
+    return false
+  end
+
+  local name = session.mux_session
+  if name and require("sidekick.cli.affinity").is_scratch(session) then
+    vim.system({ "tmux", "display-popup", "-E", ("exec tmux attach-session -t '=%s'"):format(name) })
+    return true
+  end
+
+  local pane = session.tmux_pane_id
+  if not pane then
+    Util.warn("Session is not running in a tmux pane")
+    return false
+  end
+  if name then
+    Util.exec({ "tmux", "switch-client", "-t", "=" .. name })
+  end
+  Util.exec({ "tmux", "select-window", "-t", pane })
+  Util.exec({ "tmux", "select-pane", "-t", pane })
+  return true
 end
 
 function M.clients()
@@ -192,6 +229,7 @@ function M.sessions()
             tmux_pane_index = pane.pane_index,
             tmux_pane_label = pane.pane_label,
             tmux_layouts_title = pane.layouts_title,
+            tmux_window_activity = pane.window_activity,
             mux_session = pane.session_name,
             pids = pids,
           }
@@ -219,7 +257,7 @@ function M:send(text)
   local function send()
     local buffer = "sidekick-" .. self.tmux_pane_id
     Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = text })
-    Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id })
+    Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-p", "-r", "-t", self.tmux_pane_id })
   end
 
   if self.tool.mux_focus then
