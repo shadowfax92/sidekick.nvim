@@ -111,6 +111,7 @@ local defaults = {
     ---@field worktree_siblings? boolean include linked worktrees in project scope
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
+    ---@field attach? sidekick.cli.MuxAttach
     ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
     mux = {
       backend = vim.env.ZELLIJ and "zellij" or "tmux", -- default to tmux unless zellij is detected
@@ -121,6 +122,11 @@ local defaults = {
       -- split: when run inside a terminal multiplexer, new sessions will be created in a new split
       -- NOTE: zellij only supports `terminal`
       create = "terminal", ---@type "terminal"|"window"|"split"
+      ---@class sidekick.cli.MuxAttach
+      attach = {
+        --- Open agents in other tmux sessions through a nested client.
+        cross_session = true,
+      },
       split = {
         vertical = true, -- vertical or horizontal split
         size = 0.5, -- size of the split (0-1 for percentage)
@@ -285,6 +291,7 @@ function M.setup(opts)
     M.validate("cli.multicast", "boolean")
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
     M.validate("cli.mux.backend", { "tmux", "zellij" })
+    M.validate("cli.mux.attach.cross_session", "boolean")
     M.validate("cli.mux.create", { "terminal", "window", "split" })
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })

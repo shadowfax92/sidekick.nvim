@@ -4,6 +4,7 @@ local Util = require("sidekick.util")
 ---@class sidekick.cli.muxer.Tmux: sidekick.cli.Session
 ---@field tmux_pane_id string
 ---@field tmux_pid number
+---@field tmux_session_id? string
 local M = {}
 M.__index = M
 
@@ -54,11 +55,59 @@ local function parse_pane_record(record)
   return session_id, id, pid, session_name, window_name, window_index, pane_index, pane_label, nil, activity, cwd
 end
 
----@return sidekick.cli.terminal.Cmd?
-function M:attach()
-  if self.sid == self.mux_session then
-    return { cmd = { "tmux", "attach-session", "-t", self.sid } }
+---@return string?
+function M.socket()
+  return vim.env.TMUX and vim.env.TMUX:match("^([^,]+)") or nil
+end
+
+---@return string?
+function M.current_session()
+  if not vim.env.TMUX_PANE then
+    return
   end
+  local lines = Util.exec(
+    { "tmux", "display-message", "-p", "-t", vim.env.TMUX_PANE, "#{session_name}" },
+    { notify = false }
+  )
+  return lines and lines[1] or nil
+end
+
+---@param opts? {viewer?:boolean}
+---@return sidekick.cli.terminal.Cmd?
+function M:attach(opts)
+  local env = { TMUX = false, TMUX_PANE = false }
+  if self.sid == self.mux_session then
+    return { cmd = { "tmux", "attach-session", "-t", self.sid }, env = env }
+  end
+  if Config.cli.mux.attach.cross_session == false or (opts and opts.viewer == false) then
+    return
+  end
+  if self.mux_session == M.current_session() then
+    return
+  end
+
+  local target = self.tmux_session_id or self.mux_session
+  if not target or not Util.exec({ "tmux", "has-session", "-t", target }, { notify = false }) then
+    Util.warn(("**%s** exited (`%s` is gone)"):format(self.tool.name, self.mux_session or "unknown session"))
+    return
+  end
+
+  local cmd = { "tmux" }
+  local socket = M.socket()
+  if socket then
+    vim.list_extend(cmd, { "-S", socket })
+  end
+
+  local shared = self.tmux_session_id ~= nil and #(M.clients()[self.tmux_session_id] or {}) > 0
+  if not shared and self.tmux_window_index then
+    vim.list_extend(cmd, { "select-window", "-t", ("%s:%s"):format(target, self.tmux_window_index), ";" })
+  end
+  cmd[#cmd + 1] = "attach-session"
+  if shared then
+    vim.list_extend(cmd, { "-f", "ignore-size" })
+  end
+  vim.list_extend(cmd, { "-t", target })
+  return { cmd = cmd, env = env }
 end
 
 function M:init()
@@ -228,6 +277,7 @@ function M.sessions()
             tmux_window_index = pane.window_index,
             tmux_pane_index = pane.pane_index,
             tmux_pane_label = pane.pane_label,
+            tmux_session_id = pane.session_id,
             tmux_layouts_title = pane.layouts_title,
             tmux_window_activity = pane.window_activity,
             mux_session = pane.session_name,

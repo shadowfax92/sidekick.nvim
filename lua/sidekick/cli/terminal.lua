@@ -5,7 +5,7 @@ local Util = require("sidekick.util")
 ---@class sidekick.cli.terminal.Cmd
 ---@field name string Name of the tool
 ---@field cmd string[] Command to run the CLI tool
----@field env? table<string, string> Environment variables to set when running the command
+---@field env? table<string, string|false> Environment variables to set or clear when running the command
 
 ---@class sidekick.cli.Terminal: sidekick.cli.Session
 ---@field opts sidekick.win.Opts

@@ -46,8 +46,9 @@ end
 
 --- Attach to an existing session
 --- If the backend returns a Cmd, a new terminal session will be spawned
+---@param opts? {viewer?:boolean}
 ---@return sidekick.cli.terminal.Cmd?
-function B:attach() end
+function B:attach(opts) end
 
 --- Detach from an existing session
 function B:detach() end
@@ -167,14 +168,15 @@ function M.detach(session)
 end
 
 ---@param session sidekick.cli.Session
-function M.attach(session)
+---@param opts? {viewer?:boolean}
+function M.attach(session, opts)
   if M._attached[session.id] then
     return session
   end
   ---@type sidekick.cli.terminal.Cmd?
   local cmd
   if session.started then
-    cmd = session:attach()
+    cmd = session:attach(opts)
   else
     cmd = session:start()
   end
@@ -182,7 +184,7 @@ function M.attach(session)
     session = M.new({
       tool = session.tool:clone({ cmd = cmd.cmd, env = cmd.env }),
       cwd = session.cwd,
-      id = "terminal: " .. session.sid,
+      id = "terminal: " .. session.id,
       backend = "terminal",
       mux_backend = session.backend,
       mux_session = session.mux_session,

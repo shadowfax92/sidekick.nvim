@@ -369,7 +369,7 @@ function M.with(cb, opts)
 end
 
 ---@param state sidekick.cli.State
----@param opts? {show?:boolean, focus?:boolean, notify?:boolean}
+---@param opts? {show?:boolean, focus?:boolean, notify?:boolean, viewer?:boolean}
 ---@return sidekick.cli.State state, boolean attached whether we just attached
 function M.attach(state, opts)
   opts = opts or {}
@@ -378,7 +378,7 @@ function M.attach(state, opts)
 
   -- if the session is already attached, the below is a no-op
   local session = state.session or Session.new({ tool = tool.name })
-  session = Session.attach(session)
+  session = Session.attach(session, { viewer = opts.viewer })
 
   state = M.get_state(session) -- update state
   local terminal = state.terminal
