@@ -123,8 +123,8 @@ local defaults = {
       -- NOTE: zellij only supports `terminal`
       create = "terminal", ---@type "terminal"|"window"|"split"
       ---@class sidekick.cli.MuxAttach
+      ---@field cross_session? boolean open agents in other tmux sessions through a nested client
       attach = {
-        --- Open agents in other tmux sessions through a nested client.
         cross_session = true,
       },
       split = {

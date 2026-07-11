@@ -170,12 +170,20 @@ end
 ---@param session sidekick.cli.Session
 ---@param opts? {viewer?:boolean}
 function M.attach(session, opts)
-  if M._attached[session.id] then
-    return session
-  end
   ---@type sidekick.cli.terminal.Cmd?
   local cmd
-  if session.started then
+  local attached = M._attached[session.id]
+  if attached then
+    session = attached
+    if session.backend == "terminal" or (opts and opts.viewer == false) then
+      return session
+    end
+    cmd = session:attach(opts)
+    if not cmd then
+      return session
+    end
+    M._attached[session.id] = nil
+  elseif session.started then
     cmd = session:attach(opts)
   else
     cmd = session:start()

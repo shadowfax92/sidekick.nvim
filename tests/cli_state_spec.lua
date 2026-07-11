@@ -324,6 +324,52 @@ describe("cli state routing", function()
     assert.is_nil(states[2].session)
   end)
 
+  it("decorates terminal wrappers with their parent pane affinity", function()
+    local parent = session("codex", "parent")
+    local wrapper = session("codex", "wrapper")
+    local scored
+    wrapper.backend = "terminal"
+    wrapper.parent = parent
+    wrapper.priority = 100
+    Session.sessions = function()
+      return { wrapper }
+    end
+    Affinity.score = function(_, s)
+      scored = s
+      return { exact_cwd = true, same_git_root = true, same_repo = true, score = 1900, badges = {} }
+    end
+
+    State.get({ started = true })
+
+    assert.are.equal(parent, scored)
+  end)
+
+  it("keeps sibling agents visible when a viewer shares their tmux client pid", function()
+    local viewed = session("codex", "viewed")
+    local sibling = session("claude", "sibling")
+    local wrapper = session("codex", "wrapper")
+    viewed.pids = { 10, 999 }
+    sibling.pids = { 20, 999 }
+    wrapper.backend = "terminal"
+    wrapper.parent = viewed
+    wrapper.pids = { 999 }
+    wrapper.priority = 100
+    Session.sessions = function()
+      return { viewed, sibling, wrapper }
+    end
+    Affinity.score = function()
+      return { exact_cwd = true, same_git_root = true, same_repo = true, score = 1900, badges = {} }
+    end
+
+    local states = State.get({ started = true })
+    local ids = vim.tbl_map(function(state)
+      return state.session.id
+    end, states)
+    table.sort(ids)
+
+    assert.are.same({ "sibling", "wrapper" }, ids)
+  end)
+
   it("breaks affinity ties by tmux window activity", function()
     local stale = session("claude", "stale")
     local fresh = session("claude", "fresh")

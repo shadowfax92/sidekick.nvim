@@ -73,6 +73,22 @@ describe("cli select columns", function()
     assert.matches(session .. ":1%.2", text(loc.parts))
   end)
 
+  it("renders tmux metadata from an attached terminal's parent", function()
+    local state = agent()
+    local parent = state.session
+    state.session = {
+      backend = "terminal",
+      cwd = parent.cwd,
+      mux_session = parent.mux_session,
+      parent = parent,
+    }
+    local col = by_id(columns(state))
+
+    assert.matches("panda", text(col.label.parts))
+    assert.matches("MAIN:1%.2", text(col.loc.parts))
+    assert.matches("/tmp/project", text(col.path.parts))
+  end)
+
   it("searches tool, label and location, but never the path", function()
     local searchable = {}
     for _, col in ipairs(columns(agent())) do

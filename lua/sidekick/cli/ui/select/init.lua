@@ -87,6 +87,12 @@ local function tool_hl(name)
   return vim.fn.hlexists(hl) == 1 and hl or "SidekickPickerTool"
 end
 
+---@param session sidekick.cli.Session?
+---@return sidekick.cli.Session?
+local function display_session(session)
+  return session and (session.parent or session) or nil
+end
+
 ---The primary handle for a row. Pane labels can be unset or duplicated, so fall back
 ---to the window name and finally to the `window.pane` indexes. Never returns nil.
 ---@param session sidekick.cli.Session
@@ -113,7 +119,7 @@ end
 ---@param state sidekick.cli.State
 ---@return snacks.picker.Highlight[]
 local function location(state)
-  local session = state.session
+  local session = assert(display_session(state.session))
   local affinity = state.affinity or {}
   local function hl(current)
     return current and "SidekickPickerCurrent" or "SidekickPickerLoc"
@@ -140,7 +146,7 @@ end
 ---@return snacks.picker.Highlight[]
 local function badges(state)
   local ret = {} ---@type snacks.picker.Highlight[]
-  if Affinity.is_scratch(state.session) then
+  if Affinity.is_scratch(display_session(state.session)) then
     ret[#ret + 1] = { Config.ui.icons.popup, "SidekickPickerPopup" }
   end
   for _, badge in ipairs(state.affinity and state.affinity.badges or {}) do
@@ -174,7 +180,7 @@ end
 ---@return sidekick.cli.select.Column[]
 function M.columns(state, opts)
   local width = (opts or {}).width or line_width()
-  local session = state.session
+  local session = display_session(state.session)
 
   local status = state.attached and "attached"
     or state.started and "started"

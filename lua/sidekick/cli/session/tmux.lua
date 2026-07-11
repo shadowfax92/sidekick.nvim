@@ -60,6 +60,16 @@ function M.socket()
   return vim.env.TMUX and vim.env.TMUX:match("^([^,]+)") or nil
 end
 
+---@return string[]
+local function tmux_cmd()
+  local cmd = { "tmux" }
+  local socket = M.socket()
+  if socket then
+    vim.list_extend(cmd, { "-S", socket })
+  end
+  return cmd
+end
+
 ---@return string?
 function M.current_session()
   if not vim.env.TMUX_PANE then
@@ -77,7 +87,9 @@ end
 function M:attach(opts)
   local env = { TMUX = false, TMUX_PANE = false }
   if self.sid == self.mux_session then
-    return { cmd = { "tmux", "attach-session", "-t", self.sid }, env = env }
+    local cmd = tmux_cmd()
+    vim.list_extend(cmd, { "attach-session", "-t", self.sid })
+    return { cmd = cmd, env = env }
   end
   if Config.cli.mux.attach.cross_session == false or (opts and opts.viewer == false) then
     return
@@ -92,11 +104,7 @@ function M:attach(opts)
     return
   end
 
-  local cmd = { "tmux" }
-  local socket = M.socket()
-  if socket then
-    vim.list_extend(cmd, { "-S", socket })
-  end
+  local cmd = tmux_cmd()
 
   local shared = self.tmux_session_id ~= nil and #(M.clients()[self.tmux_session_id] or {}) > 0
   if not shared and self.tmux_window_index then

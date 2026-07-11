@@ -96,7 +96,14 @@ describe("tmux attach", function()
     Config.cli.mux.attach.cross_session = false
     local cmd = target({ mux_session = "codex deadbeef" }):attach({ viewer = false })
 
-    assert.are.same({ "tmux", "attach-session", "-t", "codex deadbeef" }, cmd.cmd)
+    assert.are.same({
+      "tmux",
+      "-S",
+      "/private/tmp/tmux-501/default",
+      "attach-session",
+      "-t",
+      "codex deadbeef",
+    }, cmd.cmd)
     assert.are.same({ TMUX = false, TMUX_PANE = false }, cmd.env)
   end)
 
@@ -310,6 +317,48 @@ describe("session attach options", function()
     assert.are.equal("terminal: tmux 99", wrapper_opts.id)
     assert.are.equal(source, wrapper_opts.parent)
     assert.are.equal("terminal: tmux 99", attached.id)
+  end)
+
+  it("upgrades a virtual attachment when it is explicitly viewed later", function()
+    local backend_opts = {}
+    local source = {
+      cwd = "/repo/task",
+      id = "tmux 99",
+      is_running = function()
+        return true
+      end,
+      mux_session = "sf_task_codex",
+      sid = "codex deadbeef",
+      started = true,
+      tool = {
+        clone = function()
+          return { name = "codex" }
+        end,
+      },
+      attach = function(_, opts)
+        backend_opts[#backend_opts + 1] = opts or "default"
+        if opts and opts.viewer == false then
+          return
+        end
+        return { cmd = { "tmux" }, env = { TMUX = false } }
+      end,
+    }
+    Session.new = function(opts)
+      return vim.tbl_extend("force", opts, {
+        is_running = function()
+          return true
+        end,
+        start = function() end,
+      })
+    end
+
+    assert.are.equal(source, Session.attach(source, { viewer = false }))
+    local viewed = Session.attach(source)
+
+    assert.are.same({ { viewer = false }, "default" }, backend_opts)
+    assert.are.equal("terminal: tmux 99", viewed.id)
+    assert.is_nil(Session._attached[source.id])
+    assert.are.equal(viewed, Session._attached[viewed.id])
   end)
 end)
 

@@ -66,7 +66,8 @@ end
 local function decorate(states)
   local scope = Affinity.current_scope()
   for _, state in ipairs(states) do
-    state.affinity = state.session and Affinity.score(scope, state.session) or nil
+    local session = state.session and (state.session.parent or state.session) or nil
+    state.affinity = session and Affinity.score(scope, session) or nil
   end
 end
 
@@ -164,7 +165,9 @@ function M.get(filter)
     local skip = false
     if not s:is_attached() then
       for _, s2 in pairs(sessions) do
-        if s2 ~= s and Util.overlaps(s2.pids or {}, s.pids or {}) and s2.priority > s.priority then
+        local duplicate = s2.parent and s2.parent.id == s.id
+          or (not s2.parent and Util.overlaps(s2.pids or {}, s.pids or {}))
+        if s2 ~= s and duplicate and s2.priority > s.priority then
           skip = true
           break
         end
