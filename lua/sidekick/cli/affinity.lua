@@ -25,6 +25,7 @@ local project_cache = {} ---@type table<string, sidekick.cli.Project>
 ---@class sidekick.cli.Affinity
 ---@field exact_cwd boolean
 ---@field same_git_root boolean
+---@field same_repo boolean
 ---@field same_tmux_session boolean
 ---@field same_tmux_window boolean
 ---@field same_tmux_pane boolean
@@ -55,6 +56,9 @@ local function badges(affinity)
   if affinity.same_git_root then
     ret[#ret + 1] = { text = "root", hl = "SidekickCliAffinityRoot" }
   end
+  if affinity.same_repo then
+    ret[#ret + 1] = { text = "repo", hl = "SidekickCliAffinityRepo" }
+  end
   if affinity.same_tmux_window then
     ret[#ret + 1] = { text = "win", hl = "SidekickCliAffinityWindow" }
   end
@@ -72,6 +76,9 @@ local function score(affinity)
   end
   if affinity.same_git_root then
     ret = ret + 500
+  end
+  if affinity.same_repo then
+    ret = ret + 400
   end
   if affinity.same_tmux_session then
     ret = ret + 100
@@ -166,6 +173,7 @@ function M.score(scope, session)
   local affinity = {
     exact_cwd = scope.cwd == session.cwd,
     same_git_root = false,
+    same_repo = false,
     same_tmux_session = scope.tmux_session ~= nil and scope.tmux_session == session.mux_session,
     same_tmux_window = false,
     same_tmux_pane = scope.tmux_pane_id ~= nil and scope.tmux_pane_id == session.tmux_pane_id,
@@ -176,6 +184,8 @@ function M.score(scope, session)
   local scope_project = scope.project
   if scope_project and session_project then
     affinity.same_git_root = project_id(scope_project) ~= nil and project_id(scope_project) == project_id(session_project)
+    affinity.same_repo = scope_project.git_common_dir ~= nil
+      and scope_project.git_common_dir == session_project.git_common_dir
   end
 
   if affinity.same_tmux_session and scope.tmux_window_index ~= nil then
@@ -199,7 +209,9 @@ function M.in_scope(affinity, scope)
   if scope == "cwd" then
     return affinity.exact_cwd
   end
-  return affinity.exact_cwd or affinity.same_git_root
+  return affinity.exact_cwd
+    or affinity.same_git_root
+    or (Config.cli.mux.auto_attach.worktree_siblings ~= false and affinity.same_repo)
 end
 
 function M.reset()

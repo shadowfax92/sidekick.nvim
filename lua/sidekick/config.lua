@@ -9,6 +9,7 @@ local function normalize_auto_attach(value)
     on_demand = true,
     scope = "project",
     startup = true,
+    worktree_siblings = true,
   }
   if value == false then
     return vim.tbl_extend("force", defaults, {
@@ -107,6 +108,7 @@ local defaults = {
     ---@field startup? boolean auto-attach matching sessions on `VimEnter`
     ---@field on_demand? boolean auto-attach matching sessions when a CLI flow requests a target
     ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
+    ---@field worktree_siblings? boolean include linked worktrees in project scope
     ---@class sidekick.cli.Mux
     ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
     ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
@@ -127,6 +129,7 @@ local defaults = {
         startup = true,
         on_demand = true,
         scope = "project",
+        worktree_siblings = true,
       },
     },
     --- Actual cli tool config is loaded from the runtime path `sk/cli/{tool}.lua` and merged with the config below.
@@ -286,6 +289,7 @@ function M.setup(opts)
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
     M.validate("cli.mux.auto_attach.startup", "boolean")
+    M.validate("cli.mux.auto_attach.worktree_siblings", "boolean")
     M.validate("cli.mux.tmx_scratch", "boolean")
     M.validate("cli.file_resolvers", "table")
     M.validate("nes.diff.show", { "always", "cursor" })
@@ -359,6 +363,7 @@ function M.set_hl()
     CliUnavailable = "DiagnosticError",
     CliAffinityCwd = "DiagnosticOk",
     CliAffinityPane = "DiagnosticInfo",
+    CliAffinityRepo = "DiagnosticHint",
     CliAffinityRoot = "Special",
     CliAffinityWindow = "DiagnosticWarn",
     LocDelim = "Delimiter",

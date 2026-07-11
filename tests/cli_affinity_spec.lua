@@ -11,6 +11,7 @@ describe("cli affinity", function()
   local original_project
   local original_panes
   local original_tmx_scratch
+  local original_worktree_siblings
   local original_env
 
   before_each(function()
@@ -18,6 +19,7 @@ describe("cli affinity", function()
     original_project = Affinity.project
     original_panes = Tmux.panes
     original_tmx_scratch = Config.cli.mux.tmx_scratch
+    original_worktree_siblings = Config.cli.mux.auto_attach.worktree_siblings
     original_env = {}
     for _, key in ipairs(env_keys) do
       original_env[key] = vim.env[key] or vim.NIL
@@ -29,6 +31,7 @@ describe("cli affinity", function()
     Affinity.project = original_project
     Tmux.panes = original_panes
     Config.cli.mux.tmx_scratch = original_tmx_scratch
+    Config.cli.mux.auto_attach.worktree_siblings = original_worktree_siblings
     for key, value in pairs(original_env) do
       vim.env[key] = value
     end
@@ -62,9 +65,11 @@ describe("cli affinity", function()
     assert.is_true(affinity.same_tmux_session)
     assert.is_true(affinity.same_tmux_window)
     assert.is_false(affinity.same_tmux_pane)
-    assert.are.equal(650, affinity.score)
+    assert.is_true(affinity.same_repo)
+    assert.are.equal(1050, affinity.score)
     assert.are.same({
       { text = "root", hl = "SidekickCliAffinityRoot" },
+      { text = "repo", hl = "SidekickCliAffinityRepo" },
       { text = "win", hl = "SidekickCliAffinityWindow" },
     }, affinity.badges)
   end)
@@ -78,7 +83,8 @@ describe("cli affinity", function()
     assert.is_false(Affinity.is_scratch(nil))
   end)
 
-  it("does not treat sibling worktrees as the same project", function()
+  it("recognizes sibling worktrees as the same repository", function()
+    Config.cli.mux.auto_attach.worktree_siblings = true
     local projects = {
       ["/repo/.worktrees/task-a"] = { cwd = "/repo/.worktrees/task-a", worktree_root = "/repo/.worktrees/task-a", git_common_dir = "/repo/.git" },
       ["/repo/.worktrees/task-b"] = { cwd = "/repo/.worktrees/task-b", worktree_root = "/repo/.worktrees/task-b", git_common_dir = "/repo/.git" },
@@ -101,7 +107,34 @@ describe("cli affinity", function()
     })
 
     assert.is_false(affinity.same_git_root)
+    assert.is_true(affinity.same_repo)
+    assert.are.equal(400, affinity.score)
+    assert.is_true(Affinity.in_scope(affinity, "project"))
+    assert.are.same({ { text = "repo", hl = "SidekickCliAffinityRepo" } }, affinity.badges)
+
+    Config.cli.mux.auto_attach.worktree_siblings = false
     assert.is_false(Affinity.in_scope(affinity, "project"))
+  end)
+
+  it("does not match worktrees from different repositories", function()
+    local projects = {
+      ["/repo-a/task"] = { cwd = "/repo-a/task", worktree_root = "/repo-a/task", git_common_dir = "/repo-a/.git" },
+      ["/repo-b/task"] = { cwd = "/repo-b/task", worktree_root = "/repo-b/task", git_common_dir = "/repo-b/.git" },
+    }
+    Affinity.project = function(path)
+      return projects[path]
+    end
+
+    local affinity = Affinity.score({
+      cwd = "/repo-a/task",
+      project = projects["/repo-a/task"],
+    }, {
+      cwd = "/repo-b/task",
+    })
+
+    assert.is_false(affinity.same_git_root)
+    assert.is_false(affinity.same_repo)
+    assert.are.equal(0, affinity.score)
     assert.are.same({}, affinity.badges)
   end)
 
@@ -129,6 +162,7 @@ describe("cli affinity", function()
     assert.are.same({
       { text = "cwd", hl = "SidekickCliAffinityCwd" },
       { text = "root", hl = "SidekickCliAffinityRoot" },
+      { text = "repo", hl = "SidekickCliAffinityRepo" },
     }, affinity.badges)
   end)
 
