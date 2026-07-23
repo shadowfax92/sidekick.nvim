@@ -238,14 +238,15 @@ function M.setup(opts)
     desc = "Open recent Sidekick comment drafts",
   })
 
+  M.set_hl()
+
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = M.augroup,
+    callback = M.set_hl,
+  })
+
   vim.schedule(function()
     vim.fn.mkdir(state_dir, "p")
-    M.set_hl()
-
-    vim.api.nvim_create_autocmd("ColorScheme", {
-      group = M.augroup,
-      callback = M.set_hl,
-    })
 
     -- Track when a window was last focused
     vim.api.nvim_create_autocmd({ "WinEnter" }, {
