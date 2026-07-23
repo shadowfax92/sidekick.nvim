@@ -1,6 +1,7 @@
 ---@module 'luassert'
 
 local Select = require("sidekick.cli.ui.select")
+local Fzf = require("sidekick.cli.ui.select.fzf")
 
 local function text(parts)
   return table.concat(vim.tbl_map(function(part)
@@ -149,6 +150,87 @@ describe("cli select formatter", function()
     assert.matches("%[cwd%]", line)
     assert.is_true(vim.tbl_contains(hls(parts), "SidekickCliAffinityCwd"))
     assert.is_true(vim.tbl_contains(hls(parts), "SidekickPickerLabel"))
+  end)
+end)
+
+describe("cli select fzf actions", function()
+  local State = require("sidekick.cli.state")
+  local Tmux = require("sidekick.cli.session.tmux")
+  local original_detach
+  local original_focus
+  local original_fzf
+  local original_fzf_utils
+  local picker
+
+  before_each(function()
+    original_detach = State.detach
+    original_focus = Tmux.focus
+    original_fzf = package.loaded["fzf-lua"]
+    original_fzf_utils = package.loaded["fzf-lua.utils"]
+    package.loaded["fzf-lua"] = {
+      fzf_exec = function(entries, opts)
+        picker = { entries = entries, opts = opts }
+      end,
+    }
+    package.loaded["fzf-lua.utils"] = {
+      ansi_from_hl = function() end,
+    }
+  end)
+
+  after_each(function()
+    State.detach = original_detach
+    Tmux.focus = original_focus
+    package.loaded["fzf-lua"] = original_fzf
+    package.loaded["fzf-lua.utils"] = original_fzf_utils
+  end)
+
+  it("attaches every selected agent", function()
+    local tools = {
+      agent({ tmux_pane_label = "first" }),
+      agent({ tmux_pane_label = "second" }),
+    }
+    local selected = {}
+
+    Fzf.select(tools, function(state)
+      selected[#selected + 1] = state
+    end)
+    picker.opts.actions.enter({ picker.entries[2], picker.entries[1] })
+
+    assert.is_true(picker.opts.fzf_opts["--multi"])
+    assert.matches("<tab> select", picker.opts.header, nil, true)
+    assert.are.same({ tools[2], tools[1] }, selected)
+  end)
+
+  it("detaches every selected agent", function()
+    local tools = {
+      agent({ tmux_pane_label = "first" }),
+      agent({ tmux_pane_label = "second" }),
+    }
+    local detached = {}
+    State.detach = function(state)
+      detached[#detached + 1] = state
+    end
+
+    Fzf.select(tools, function() end)
+    picker.opts.actions["ctrl-x"]({ picker.entries[1], picker.entries[2] })
+
+    assert.are.same(tools, detached)
+  end)
+
+  it("jumps only to the first selected agent", function()
+    local tools = {
+      agent({ tmux_pane_id = "%1", tmux_pane_label = "first" }),
+      agent({ tmux_pane_id = "%2", tmux_pane_label = "second" }),
+    }
+    local focused = {}
+    Tmux.focus = function(session)
+      focused[#focused + 1] = session
+    end
+
+    Fzf.select(tools, function() end)
+    picker.opts.actions["ctrl-o"]({ picker.entries[2], picker.entries[1] })
+
+    assert.are.same({ tools[2].session }, focused)
   end)
 end)
 
