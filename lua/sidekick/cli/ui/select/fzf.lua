@@ -83,17 +83,33 @@ function M.select(tools, on_select)
   end
 
   ---@param selected string[]
-  local function item(selected)
-    local idx = selected and selected[1] and tonumber(selected[1]:match("^(%d+)"))
-    return idx and tools[idx] or nil
+  local function items(selected)
+    local ret = {} ---@type sidekick.cli.State[]
+    for _, line in ipairs(selected or {}) do
+      local idx = tonumber(line:match("^(%d+)"))
+      if idx and tools[idx] then
+        ret[#ret + 1] = tools[idx]
+      end
+    end
+    return ret
   end
 
-  ---Run `fn` with the picked state, if any.
+  ---Run `fn` with the first picked state. Pane focus remains a single-target action.
   ---@param fn fun(state:sidekick.cli.State)
   local function with(fn)
     return function(selected)
-      local state = item(selected)
+      local state = items(selected)[1]
       if state then
+        fn(state)
+      end
+    end
+  end
+
+  ---Run `fn` once for every picked state.
+  ---@param fn fun(state:sidekick.cli.State)
+  local function with_each(fn)
+    return function(selected)
+      for _, state in ipairs(items(selected)) do
         fn(state)
       end
     end
@@ -102,14 +118,15 @@ function M.select(tools, on_select)
   fzf.fzf_exec(entries, {
     prompt = "Agent> ",
     header = table.concat({
-      ":: <enter> attach",
+      ":: <tab> select",
+      "<enter> attach",
       "<ctrl-o> jump to pane",
       "<ctrl-x> detach",
     }, " | "),
     winopts = { width = WINDOW_WIDTH, height = 0.6 },
     fzf_opts = {
       ["--ansi"] = true,
-      ["--multi"] = false,
+      ["--multi"] = true,
       ["--delimiter"] = NBSP,
       ["--with-nth"] = "2..",
       ["--nth"] = table.concat(nth, ","),
@@ -117,9 +134,9 @@ function M.select(tools, on_select)
       ["--tiebreak"] = "index",
     },
     actions = {
-      ["enter"] = with(on_select),
+      ["enter"] = with_each(on_select),
       ["ctrl-o"] = with(jump),
-      ["ctrl-x"] = with(function(state)
+      ["ctrl-x"] = with_each(function(state)
         require("sidekick.cli.state").detach(state)
       end),
     },
