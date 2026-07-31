@@ -140,9 +140,7 @@ function M.sessions()
   local ret = {} ---@type sidekick.cli.Session[]
   local ids = {} ---@type table<string,boolean>
   for name, backend in pairs(M.backends) do
-    local herdr = Config.cli.mux.backend == "herdr"
-    local selected = name == "terminal" or (herdr and name == "herdr") or (not herdr and name ~= "herdr")
-    for _, s in pairs(selected and backend:sessions() or {}) do
+    for _, s in pairs(backend:sessions()) do
       s.backend = name
       s.started = true
       ret[#ret + 1] = M.new(s)

@@ -20,7 +20,7 @@ local LABEL_WIDTH = 22
 local SESSION_WIDTH = 14
 local WINDOW_WIDTH = 9
 local LOC_WIDTH = 2 + SESSION_WIDTH + 3 + WINDOW_WIDTH
-local BADGE_WIDTH = 24
+local BADGE_WIDTH = 32
 local MIN_PATH_WIDTH = 12
 
 local function sw(s)
@@ -145,7 +145,14 @@ end
 ---@return snacks.picker.Highlight[]
 local function badges(state)
   local ret = {} ---@type snacks.picker.Highlight[]
-  local agent_status = state.session and state.session.agent_status or nil
+  local session = state.session
+  local backend = session and (session.mux_backend or session.backend) or nil
+  if backend == "herdr" or backend == "tmux" then
+    local name = backend:sub(1, 1):upper() .. backend:sub(2)
+    ret[#ret + 1] = { "(" .. backend .. ")", "SidekickCliBackend" .. name }
+    ret[#ret + 1] = { " " }
+  end
+  local agent_status = session and session.agent_status or nil
   if agent_status then
     local name = agent_status:sub(1, 1):upper() .. agent_status:sub(2)
     ret[#ret + 1] = { "[" .. agent_status .. "]", "SidekickCliAgent" .. name }

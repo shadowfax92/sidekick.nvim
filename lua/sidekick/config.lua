@@ -378,9 +378,11 @@ function M.set_hl()
     PickerTool = "Identifier",
   }
   -- Explicit colors rather than links: the agent picker shares a palette with the
-  -- `tmx` CLI pickers (current = green, popup = magenta, claude = coral, codex = cyan)
+  -- `tmx` CLI pickers (current/Herdr = green, popup = magenta, tmux = pink, claude = coral, codex = cyan)
   -- so the same agent reads the same in both. `default = true` keeps user overrides.
   local colors = {
+    CliBackendHerdr = { fg = "#7fd88f" },
+    CliBackendTmux = { fg = "#d16d9e" },
     PickerCurrent = { fg = "#7fd88f" },
     PickerLabel = { bold = true },
     PickerPopup = { fg = "#c678dd" },

@@ -183,7 +183,7 @@ describe("session backend selection", function()
     Config.cli.mux.enabled = original_enabled
   end)
 
-  it("discovers only terminals and the configured mux backend", function()
+  it("discovers every backend when Herdr is the creation backend", function()
     local called = {}
     local function backend(name)
       return {
@@ -205,10 +205,10 @@ describe("session backend selection", function()
     Session.sessions()
     table.sort(called)
 
-    assert.are.same({ "herdr", "terminal" }, called)
+    assert.are.same({ "herdr", "terminal", "tmux", "zellij" }, called)
   end)
 
-  it("does not add Herdr sessions when another mux backend is configured", function()
+  it("discovers every backend when tmux is the creation backend", function()
     local called = {}
     local function backend(name)
       return {
@@ -230,6 +230,6 @@ describe("session backend selection", function()
     Session.sessions()
     table.sort(called)
 
-    assert.are.same({ "terminal", "tmux", "zellij" }, called)
+    assert.are.same({ "herdr", "terminal", "tmux", "zellij" }, called)
   end)
 end)

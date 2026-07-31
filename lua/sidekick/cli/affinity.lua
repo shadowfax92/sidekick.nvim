@@ -150,21 +150,15 @@ end
 
 ---@return sidekick.cli.Scope
 function M.current_scope()
-  if Config.cli.mux.backend == "herdr" then
-    local current = require("sidekick.cli.session.herdr").current()
-    return {
-      cwd = Session.cwd(),
-      project = M.project(Session.cwd()),
-      herdr_workspace_id = current.workspace_id,
-      herdr_tab_id = current.tab_id,
-      herdr_pane_id = current.pane_id,
-    }
-  end
   local parent_pane = M.tmx_parent_pane()
   local pane = M.current_tmux()
+  local herdr = require("sidekick.cli.session.herdr").current()
   return {
     cwd = Session.cwd(),
     project = M.project(Session.cwd()),
+    herdr_workspace_id = herdr.workspace_id,
+    herdr_tab_id = herdr.tab_id,
+    herdr_pane_id = herdr.pane_id,
     tmux_session = pane and pane.session_name or nil,
     tmux_window_index = pane and pane.window_index or nil,
     tmux_pane_id = pane and pane.id or parent_pane or vim.env.TMUX_PANE or nil,

@@ -9,7 +9,7 @@ See the [upstream README](https://github.com/folke/sidekick.nvim#readme) for eve
 ## What this fork adds
 
 - **Send with comment** — `cli.send_with_comment()` opens a multiline popup (via `Snacks.win`) so you can add a note before sending; the comment goes in as a blockquote above the context block
-- **Tmux and Herdr multicast + auto-attach** — sends fan out to every matching agent in the project scope; auto-attach runs on `VimEnter`, on-demand, or via `cli.auto_attach()`
+- **Tmux and Herdr multicast + auto-attach** — discovers both backends at once, marks them as pink `(tmux)` or green `(herdr)`, and sends to every matching agent in the project scope; auto-attach runs on `VimEnter`, on-demand, or via `cli.auto_attach()`
 - **tmx scratch affinity** — Neovim inside a `tmx` scratch pane prefers the parent pane's agent by default
 - **Herdr agent discovery** — reads Herdr's native snapshot, displays agent names and lifecycle status with workspace/tab context, sends through Herdr's bracketed-input API, and focuses the selected Herdr pane
 - **Agent picker** — `cli.select()` gets a native fzf-lua front-end: colored columns (`status · tool · agent or pane label · workspace/session › tab/window · badges · cwd`), fuzzy search scoped to the tool, `⧉` for agents living in `tmx` popups, the current location in green, `<ctrl-o>` to jump to the agent pane, `<ctrl-x>` to detach. Running agents always sort above "start a new tool"; ties break on backend activity. Falls back to `vim.ui.select` when fzf-lua isn't installed

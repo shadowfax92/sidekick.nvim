@@ -117,13 +117,19 @@ describe("cli affinity", function()
     assert.are.equal(650, affinity.score)
   end)
 
-  it("uses the calling Herdr pane as the current scope", function()
+  it("keeps both Herdr and tmux locations in the current scope", function()
     Config.cli.mux.backend = "herdr"
     Config.cli.mux.enabled = true
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "w2"
     vim.env.HERDR_TAB_ID = "w2:t4"
     vim.env.HERDR_PANE_ID = "w2:p9"
+    vim.env.TMUX_PANE = "%7"
+    Tmux.panes = function()
+      return {
+        { id = "%7", session_name = "main", window_index = "2" },
+      }
+    end
     Session.cwd = function()
       return "/repo/app"
     end
@@ -136,6 +142,9 @@ describe("cli affinity", function()
     assert.are.equal("w2", scope.herdr_workspace_id)
     assert.are.equal("w2:t4", scope.herdr_tab_id)
     assert.are.equal("w2:p9", scope.herdr_pane_id)
+    assert.are.equal("main", scope.tmux_session)
+    assert.are.equal("2", scope.tmux_window_index)
+    assert.are.equal("%7", scope.tmux_pane_id)
   end)
 
   it("does not treat sibling worktrees as the same project", function()

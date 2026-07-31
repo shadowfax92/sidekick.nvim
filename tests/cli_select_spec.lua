@@ -119,11 +119,13 @@ describe("cli select columns", function()
       },
     }))
     local badges = by_id(cols).badges
+    assert.matches("%(tmux%)", text(badges.parts))
     assert.matches("⧉", text(badges.parts))
     assert.matches("%[cwd%]", text(badges.parts))
     assert.matches("%[root%]", text(badges.parts))
     assert.is_nil(text(badges.parts):find("%[win%]"))
     assert.is_nil(text(badges.parts):find("%[pane%]"))
+    assert.is_true(vim.tbl_contains(hls(badges.parts), "SidekickCliBackendTmux"))
     assert.is_true(vim.tbl_contains(hls(badges.parts), "SidekickPickerPopup"))
   end)
 
@@ -145,7 +147,9 @@ describe("cli select columns", function()
 
     assert.matches("add%-herdr%-support", text(col.label.parts))
     assert.matches("sidekick › agents", text(col.loc.parts))
+    assert.matches("%(herdr%)", text(col.badges.parts))
     assert.matches("%[working%]", text(col.badges.parts))
+    assert.is_true(vim.tbl_contains(hls(col.badges.parts), "SidekickCliBackendHerdr"))
     assert.is_true(vim.tbl_contains(hls(col.badges.parts), "SidekickCliAgentWorking"))
   end)
 
