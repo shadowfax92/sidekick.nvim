@@ -108,10 +108,10 @@ local defaults = {
     ---@field on_demand? boolean auto-attach matching sessions when a CLI flow requests a target
     ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
     ---@class sidekick.cli.Mux
-    ---@field backend? "tmux"|"zellij" Multiplexer backend to persist CLI sessions
+    ---@field backend? "herdr"|"tmux"|"zellij" Multiplexer backend to persist CLI sessions
     ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
     mux = {
-      backend = vim.env.ZELLIJ and "zellij" or "tmux", -- default to tmux unless zellij is detected
+      backend = vim.env.HERDR_ENV == "1" and "herdr" or vim.env.ZELLIJ and "zellij" or "tmux",
       enabled = false,
       tmx_scratch = true,
       -- terminal: new sessions will be created for each CLI tool and shown in a Neovim terminal
@@ -282,7 +282,7 @@ function M.setup(opts)
 
     M.validate("cli.multicast", "boolean")
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
-    M.validate("cli.mux.backend", { "tmux", "zellij" })
+    M.validate("cli.mux.backend", { "herdr", "tmux", "zellij" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
     M.validate("cli.mux.auto_attach.on_demand", "boolean")
     M.validate("cli.mux.auto_attach.scope", { "cwd", "project", "all" })
@@ -362,6 +362,11 @@ function M.set_hl()
     CliAffinityPane = "DiagnosticInfo",
     CliAffinityRoot = "Special",
     CliAffinityWindow = "DiagnosticWarn",
+    CliAgentBlocked = "DiagnosticWarn",
+    CliAgentDone = "DiagnosticOk",
+    CliAgentIdle = "DiagnosticOk",
+    CliAgentUnknown = "Comment",
+    CliAgentWorking = "DiagnosticInfo",
     LocDelim = "Delimiter",
     LocFile = "@markup.link",
     LocNum = "@attribute",

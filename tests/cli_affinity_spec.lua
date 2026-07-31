@@ -6,7 +6,17 @@ local Session = require("sidekick.cli.session")
 local Tmux = require("sidekick.cli.session.tmux")
 
 describe("cli affinity", function()
-  local env_keys = { "TMUX_PANE", "TMX_PARENT_PANE", "TMX_SCRATCH" }
+  local env_keys = {
+    "HERDR_ENV",
+    "HERDR_PANE_ID",
+    "HERDR_TAB_ID",
+    "HERDR_WORKSPACE_ID",
+    "TMUX_PANE",
+    "TMX_PARENT_PANE",
+    "TMX_SCRATCH",
+  }
+  local original_backend
+  local original_enabled
   local original_cwd
   local original_project
   local original_panes
@@ -15,6 +25,8 @@ describe("cli affinity", function()
 
   before_each(function()
     original_cwd = Session.cwd
+    original_backend = Config.cli.mux.backend
+    original_enabled = Config.cli.mux.enabled
     original_project = Affinity.project
     original_panes = Tmux.panes
     original_tmx_scratch = Config.cli.mux.tmx_scratch
@@ -26,6 +38,8 @@ describe("cli affinity", function()
 
   after_each(function()
     Session.cwd = original_cwd
+    Config.cli.mux.backend = original_backend
+    Config.cli.mux.enabled = original_enabled
     Affinity.project = original_project
     Tmux.panes = original_panes
     Config.cli.mux.tmx_scratch = original_tmx_scratch
@@ -76,6 +90,52 @@ describe("cli affinity", function()
     assert.is_false(Affinity.is_scratch({ mux_session = "MAIN" }))
     assert.is_false(Affinity.is_scratch({}))
     assert.is_false(Affinity.is_scratch(nil))
+  end)
+
+  it("scores Herdr workspace, tab, and pane affinity", function()
+    Affinity.project = function(path)
+      return { cwd = path, worktree_root = "/repo/app" }
+    end
+
+    local affinity = Affinity.score({
+      cwd = "/repo/app",
+      herdr_workspace_id = "w2",
+      herdr_tab_id = "w2:t4",
+      herdr_pane_id = "w2:p1",
+      project = { cwd = "/repo/app", worktree_root = "/repo/app" },
+    }, {
+      backend = "herdr",
+      cwd = "/repo/app/subdir",
+      herdr_workspace_id = "w2",
+      herdr_tab_id = "w2:t4",
+      herdr_pane_id = "w2:p9",
+    })
+
+    assert.is_true(affinity.same_tmux_session)
+    assert.is_true(affinity.same_tmux_window)
+    assert.is_false(affinity.same_tmux_pane)
+    assert.are.equal(650, affinity.score)
+  end)
+
+  it("uses the calling Herdr pane as the current scope", function()
+    Config.cli.mux.backend = "herdr"
+    Config.cli.mux.enabled = true
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "w2"
+    vim.env.HERDR_TAB_ID = "w2:t4"
+    vim.env.HERDR_PANE_ID = "w2:p9"
+    Session.cwd = function()
+      return "/repo/app"
+    end
+    Affinity.project = function(path)
+      return { cwd = path }
+    end
+
+    local scope = Affinity.current_scope()
+
+    assert.are.equal("w2", scope.herdr_workspace_id)
+    assert.are.equal("w2:t4", scope.herdr_tab_id)
+    assert.are.equal("w2:p9", scope.herdr_pane_id)
   end)
 
   it("does not treat sibling worktrees as the same project", function()

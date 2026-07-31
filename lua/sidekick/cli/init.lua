@@ -1,6 +1,7 @@
 local Context = require("sidekick.cli.context")
 local Config = require("sidekick.config")
 local Loc = require("sidekick.cli.context.location")
+local Session = require("sidekick.cli.session")
 local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
@@ -248,6 +249,9 @@ function M.toggle(opts)
   opts = filter_opts(opts)
   State.with(function(state, attached)
     if not state.terminal then
+      if opts.focus ~= false then
+        Session.focus(state.session)
+      end
       return
     end
     if not attached then
@@ -270,6 +274,7 @@ function M.focus(opts)
   opts = filter_opts(opts)
   State.with(function(state)
     if not state.terminal then
+      Session.focus(state.session)
       return
     end
     if state.terminal:is_focused() then

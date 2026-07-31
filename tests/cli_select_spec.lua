@@ -127,6 +127,35 @@ describe("cli select columns", function()
     assert.is_true(vim.tbl_contains(hls(badges.parts), "SidekickPickerPopup"))
   end)
 
+  it("renders named Herdr agents with workspace, tab, and lifecycle status", function()
+    local cols = columns(agent({
+      backend = "herdr",
+      herdr_agent_name = "add-herdr-support",
+      herdr_pane_id = "w2:p9",
+      herdr_tab_label = "agents",
+      herdr_workspace_label = "sidekick",
+      agent_status = "working",
+      tmux_pane_label = "",
+      tmux_window_name = "",
+      mux_session = "sidekick",
+    }, {
+      affinity = { badges = {}, same_tmux_session = true, same_tmux_window = true },
+    }))
+    local col = by_id(cols)
+
+    assert.matches("add%-herdr%-support", text(col.label.parts))
+    assert.matches("sidekick › agents", text(col.loc.parts))
+    assert.matches("%[working%]", text(col.badges.parts))
+    assert.is_true(vim.tbl_contains(hls(col.badges.parts), "SidekickCliAgentWorking"))
+  end)
+
+  it("keeps the directory name when shortening paths with a trailing slash", function()
+    local cols = Select.columns(agent({ cwd = "/Users/shadowfax/code/herdr-talon/" }), { width = 100 })
+    local path = text(by_id(cols).path.parts)
+
+    assert.matches("herdr%-talon", path)
+  end)
+
   it("renders a start hint for tools without a session", function()
     local cols = columns({ installed = true, tool = { name = "claude" } })
     local col = by_id(cols)
@@ -155,7 +184,7 @@ end)
 
 describe("cli select fzf actions", function()
   local State = require("sidekick.cli.state")
-  local Tmux = require("sidekick.cli.session.tmux")
+  local Session = require("sidekick.cli.session")
   local original_detach
   local original_focus
   local original_fzf
@@ -164,7 +193,7 @@ describe("cli select fzf actions", function()
 
   before_each(function()
     original_detach = State.detach
-    original_focus = Tmux.focus
+    original_focus = Session.focus
     original_fzf = package.loaded["fzf-lua"]
     original_fzf_utils = package.loaded["fzf-lua.utils"]
     package.loaded["fzf-lua"] = {
@@ -179,7 +208,7 @@ describe("cli select fzf actions", function()
 
   after_each(function()
     State.detach = original_detach
-    Tmux.focus = original_focus
+    Session.focus = original_focus
     package.loaded["fzf-lua"] = original_fzf
     package.loaded["fzf-lua.utils"] = original_fzf_utils
   end)
@@ -223,7 +252,7 @@ describe("cli select fzf actions", function()
       agent({ tmux_pane_id = "%2", tmux_pane_label = "second" }),
     }
     local focused = {}
-    Tmux.focus = function(session)
+    Session.focus = function(session)
       focused[#focused + 1] = session
     end
 
@@ -231,6 +260,19 @@ describe("cli select fzf actions", function()
     picker.opts.actions["ctrl-o"]({ picker.entries[2], picker.entries[1] })
 
     assert.are.same({ tools[2].session }, focused)
+  end)
+
+  it("jumps to a native Herdr agent session", function()
+    local tool = agent({ backend = "herdr", herdr_pane_id = "w2:p9", tmux_pane_id = nil })
+    local focused
+    Session.focus = function(session)
+      focused = session
+    end
+
+    Fzf.select({ tool }, function() end)
+    picker.opts.actions["ctrl-o"]({ picker.entries[1] })
+
+    assert.are.equal(tool.session, focused)
   end)
 end)
 

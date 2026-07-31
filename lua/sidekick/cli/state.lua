@@ -40,9 +40,9 @@ local function affinity_score(state)
   return state.affinity and state.affinity.score or 0
 end
 
---- Unix timestamp of the last activity in the session's tmux window, 0 when unknown.
+--- Backend activity sequence used to break otherwise equal picker ranks.
 local function recency(state)
-  return state.session and state.session.tmux_window_activity or 0
+  return state.session and (state.session.herdr_state_change_seq or state.session.tmux_window_activity) or 0
 end
 
 local function auto_attach_config()

@@ -17,6 +17,9 @@ local project_cache = {} ---@type table<string, sidekick.cli.Project>
 ---@field tmux_session? string
 ---@field tmux_window_index? string
 ---@field tmux_pane_id? string
+---@field herdr_workspace_id? string
+---@field herdr_tab_id? string
+---@field herdr_pane_id? string
 
 ---@class sidekick.cli.AffinityBadge
 ---@field text string
@@ -147,6 +150,16 @@ end
 
 ---@return sidekick.cli.Scope
 function M.current_scope()
+  if Config.cli.mux.backend == "herdr" then
+    local current = require("sidekick.cli.session.herdr").current()
+    return {
+      cwd = Session.cwd(),
+      project = M.project(Session.cwd()),
+      herdr_workspace_id = current.workspace_id,
+      herdr_tab_id = current.tab_id,
+      herdr_pane_id = current.pane_id,
+    }
+  end
   local parent_pane = M.tmx_parent_pane()
   local pane = M.current_tmux()
   return {
@@ -163,12 +176,22 @@ end
 ---@return sidekick.cli.Affinity
 function M.score(scope, session)
   local session_project = M.project(session.cwd)
+  local herdr = (session.mux_backend or session.backend) == "herdr"
+  local same_session
+  local same_pane
+  if herdr then
+    same_session = scope.herdr_workspace_id ~= nil and scope.herdr_workspace_id == session.herdr_workspace_id
+    same_pane = scope.herdr_pane_id ~= nil and scope.herdr_pane_id == session.herdr_pane_id
+  else
+    same_session = scope.tmux_session ~= nil and scope.tmux_session == session.mux_session
+    same_pane = scope.tmux_pane_id ~= nil and scope.tmux_pane_id == session.tmux_pane_id
+  end
   local affinity = {
     exact_cwd = scope.cwd == session.cwd,
     same_git_root = false,
-    same_tmux_session = scope.tmux_session ~= nil and scope.tmux_session == session.mux_session,
+    same_tmux_session = same_session,
     same_tmux_window = false,
-    same_tmux_pane = scope.tmux_pane_id ~= nil and scope.tmux_pane_id == session.tmux_pane_id,
+    same_tmux_pane = same_pane,
     score = 0,
     badges = {},
   } ---@type sidekick.cli.Affinity
@@ -178,8 +201,12 @@ function M.score(scope, session)
     affinity.same_git_root = project_id(scope_project) ~= nil and project_id(scope_project) == project_id(session_project)
   end
 
-  if affinity.same_tmux_session and scope.tmux_window_index ~= nil then
-    affinity.same_tmux_window = tostring(scope.tmux_window_index) == tostring(session.tmux_window_index)
+  if affinity.same_tmux_session then
+    if herdr then
+      affinity.same_tmux_window = scope.herdr_tab_id ~= nil and scope.herdr_tab_id == session.herdr_tab_id
+    elseif scope.tmux_window_index ~= nil then
+      affinity.same_tmux_window = tostring(scope.tmux_window_index) == tostring(session.tmux_window_index)
+    end
   end
 
   affinity.score = score(affinity)

@@ -18,6 +18,7 @@ M._attached = {} ---@type table<string,sidekick.cli.Session>
 ---@field parent? sidekick.cli.Session
 ---@field mux_session? string
 ---@field mux_backend? string
+---@field herdr_pane_id? string
 
 ---@alias sidekick.cli.session.Opts sidekick.cli.session.State|{cwd?:string,id?:string}
 
@@ -121,7 +122,11 @@ function M.setup()
   end
   M.did_setup = true
   Config.tools() -- load tools, since they may register session backends
-  local session_backends = { tmux = "sidekick.cli.session.tmux", zellij = "sidekick.cli.session.zellij" }
+  local session_backends = {
+    herdr = "sidekick.cli.session.herdr",
+    tmux = "sidekick.cli.session.tmux",
+    zellij = "sidekick.cli.session.zellij",
+  }
   for name, mod in pairs(session_backends) do
     if vim.fn.executable(name) == 1 then
       M.register(name, require(mod))
@@ -135,7 +140,9 @@ function M.sessions()
   local ret = {} ---@type sidekick.cli.Session[]
   local ids = {} ---@type table<string,boolean>
   for name, backend in pairs(M.backends) do
-    for _, s in pairs(backend:sessions()) do
+    local herdr = Config.cli.mux.backend == "herdr"
+    local selected = name == "terminal" or (herdr and name == "herdr") or (not herdr and name ~= "herdr")
+    for _, s in pairs(selected and backend:sessions() or {}) do
       s.backend = name
       s.started = true
       ret[#ret + 1] = M.new(s)
@@ -152,6 +159,19 @@ function M.sessions()
     end
   end
   return ret
+end
+
+---@param session sidekick.cli.Session
+function M.focus(session)
+  M.setup()
+  session = session.parent or session
+  local name = session.mux_backend or session.backend
+  local backend = name and M.backends[name] or nil
+  if not backend or not backend.focus then
+    Util.warn("Session has no pane to focus")
+    return false
+  end
+  return backend.focus(session)
 end
 
 ---@param session sidekick.cli.Session

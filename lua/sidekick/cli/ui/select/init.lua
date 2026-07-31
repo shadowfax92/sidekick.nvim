@@ -16,11 +16,11 @@ local Util = require("sidekick.util")
 local M = {}
 
 local TOOL_WIDTH = 9
-local LABEL_WIDTH = 16
+local LABEL_WIDTH = 22
 local SESSION_WIDTH = 14
 local WINDOW_WIDTH = 9
 local LOC_WIDTH = 2 + SESSION_WIDTH + 3 + WINDOW_WIDTH
-local BADGE_WIDTH = 15
+local BADGE_WIDTH = 24
 local MIN_PATH_WIDTH = 12
 
 local function sw(s)
@@ -35,6 +35,8 @@ local function shorten_path(path, max_width)
   if max_width <= 0 or sw(path) <= max_width then
     return path
   end
+  local trimmed = path:gsub("/+$", "")
+  path = trimmed ~= "" and trimmed or path
   local parts = vim.split(path, "/", { plain = true })
   while #parts > 1 do
     table.remove(parts, 1)
@@ -91,6 +93,9 @@ end
 ---to the window name and finally to the `window.pane` indexes. Never returns nil.
 ---@param session sidekick.cli.Session
 local function pane_label(session)
+  if (session.mux_backend or session.backend) == "herdr" then
+    return session.herdr_agent_name or session.herdr_pane_label or session.herdr_pane_id or ""
+  end
   local label = session.tmux_pane_label
   if label and label ~= "" then
     return label
@@ -117,14 +122,15 @@ local function location(state)
 
   local ret = { { affinity.same_tmux_window and "● " or "  ", "SidekickPickerCurrent" } }
 
-  local mux = session.mux_session
+  local herdr = (session.mux_backend or session.backend) == "herdr"
+  local mux = herdr and session.herdr_workspace_label or session.mux_session
   if not mux or mux == "" then
     ret[#ret + 1] = { session.mux_backend or session.backend or "", "SidekickPickerLoc" }
     return ret
   end
 
   ret[#ret + 1] = { truncate(mux, SESSION_WIDTH), hl(affinity.same_tmux_session) }
-  local window = session.tmux_window_name
+  local window = herdr and session.herdr_tab_label or session.tmux_window_name
   if not window or window == "" then
     window = session.tmux_window_index and tostring(session.tmux_window_index) or nil
   end
@@ -139,6 +145,12 @@ end
 ---@return snacks.picker.Highlight[]
 local function badges(state)
   local ret = {} ---@type snacks.picker.Highlight[]
+  local agent_status = state.session and state.session.agent_status or nil
+  if agent_status then
+    local name = agent_status:sub(1, 1):upper() .. agent_status:sub(2)
+    ret[#ret + 1] = { "[" .. agent_status .. "]", "SidekickCliAgent" .. name }
+    ret[#ret + 1] = { " " }
+  end
   if Affinity.is_scratch(state.session) then
     ret[#ret + 1] = { Config.ui.icons.popup, "SidekickPickerPopup" }
   end

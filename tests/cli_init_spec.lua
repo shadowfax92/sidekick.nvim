@@ -2,6 +2,7 @@
 
 local Cli = require("sidekick.cli")
 local Config = require("sidekick.config")
+local Session = require("sidekick.cli.session")
 local State = require("sidekick.cli.state")
 local Util = require("sidekick.util")
 
@@ -164,5 +165,35 @@ describe("cli send defaults", function()
     assert.are.same({ "selected one", "selected two" }, opened.context_lines)
 
     vim.api.nvim_buf_delete(scratch_buf, { force = true })
+  end)
+end)
+
+describe("cli external sessions", function()
+  local original_focus
+  local original_with
+
+  before_each(function()
+    original_focus = Session.focus
+    original_with = State.with
+  end)
+
+  after_each(function()
+    Session.focus = original_focus
+    State.with = original_with
+  end)
+
+  it("focuses an external agent when toggled", function()
+    local session = { id = "herdr term_9" }
+    local focused
+    Session.focus = function(target)
+      focused = target
+    end
+    State.with = function(use)
+      use({ session = session })
+    end
+
+    Cli.toggle({ focus = true })
+
+    assert.are.equal(session, focused)
   end)
 end)

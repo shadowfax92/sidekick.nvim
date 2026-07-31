@@ -44,14 +44,10 @@ end
 ---@param state sidekick.cli.State
 local function jump(state)
   local session = state.session
-  -- an attached mux session is wrapped in a terminal session; the pane lives on the parent
-  if session and not session.tmux_pane_id then
-    session = session.parent
+  if not session then
+    return Util.warn("No agent pane to jump to")
   end
-  if not session or (session.mux_backend or session.backend) ~= "tmux" then
-    return Util.warn("No tmux pane to jump to")
-  end
-  require("sidekick.cli.session.tmux").focus(session)
+  require("sidekick.cli.session").focus(session)
 end
 
 ---@param tools sidekick.cli.State[]
