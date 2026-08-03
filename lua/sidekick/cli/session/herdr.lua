@@ -27,6 +27,37 @@ local function nonempty(value)
   return type(value) == "string" and value ~= "" and value or nil
 end
 
+local function without_socket_environment()
+  local ret = {}
+  for key, value in pairs(vim.fn.environ()) do
+    if key ~= "HERDR_SOCKET_PATH" then
+      ret[#ret + 1] = ("%s=%s"):format(key, value)
+    end
+  end
+  return ret
+end
+
+local function absolute_command(cmd)
+  local ret = vim.deepcopy(cmd)
+  local executable = vim.fn.exepath(ret[1])
+  if executable ~= "" then
+    ret[1] = executable
+  end
+  return ret
+end
+
+local function retry_without_socket(cmd)
+  local lines, stdout = Util.exec(cmd, { notify = false })
+  if stdout or not nonempty(vim.env.HERDR_SOCKET_PATH) then
+    return lines, stdout
+  end
+  return Util.exec(absolute_command(cmd), {
+    notify = false,
+    env = without_socket_environment(),
+    clear_env = true,
+  })
+end
+
 local function index(items, key)
   local ret = {}
   for _, item in ipairs(items or {}) do
@@ -38,7 +69,7 @@ local function index(items, key)
 end
 
 local function decode_snapshot()
-  local _, stdout = Util.exec({ "herdr", "api", "snapshot" }, { notify = false })
+  local _, stdout = retry_without_socket({ "herdr", "api", "snapshot" })
   if not stdout then
     return
   end
@@ -54,17 +85,23 @@ local function resolve_socket_path()
   if socket_path then
     return socket_path
   end
-  socket_path = nonempty(vim.env.HERDR_SOCKET_PATH)
-  if socket_path then
-    return socket_path
-  end
-  local lines = Util.exec({ "herdr", "status", "server" }, { notify = false })
+  local lines = retry_without_socket({ "herdr", "status", "server" })
   for _, line in ipairs(lines or {}) do
     socket_path = line:match("^socket:%s+(.+)$")
     if socket_path then
       return socket_path
     end
   end
+  socket_path = nonempty(vim.env.HERDR_SOCKET_PATH)
+  return socket_path
+end
+
+local function exec(cmd)
+  local path = resolve_socket_path()
+  return Util.exec(cmd, {
+    notify = false,
+    env = path and { HERDR_SOCKET_PATH = path } or nil,
+  })
 end
 
 local function finish_callbacks(message)
@@ -231,15 +268,16 @@ function M.sessions()
     return {}
   end
 
-  context = {
-    workspace_id = snapshot.focused_workspace_id,
-    tab_id = snapshot.focused_tab_id,
-    pane_id = snapshot.focused_pane_id,
-  }
-
   local workspaces = index(snapshot.workspaces, "workspace_id")
   local tabs = index(snapshot.tabs, "tab_id")
   local panes = index(snapshot.panes, "pane_id")
+  local source_pane_id = nonempty(vim.env.HERDR_SCRATCH_SOURCE_PANE)
+  local source_pane = source_pane_id and panes[source_pane_id] or nil
+  context = {
+    workspace_id = source_pane and source_pane.workspace_id or snapshot.focused_workspace_id,
+    tab_id = source_pane and source_pane.tab_id or snapshot.focused_tab_id,
+    pane_id = source_pane_id or snapshot.focused_pane_id,
+  }
   local sessions = {}
 
   for _, agent in ipairs(snapshot.agents or {}) do
@@ -287,6 +325,14 @@ function M.sessions()
 end
 
 function M.current()
+  local source_pane_id = nonempty(vim.env.HERDR_SCRATCH_SOURCE_PANE)
+  if source_pane_id then
+    return {
+      workspace_id = context.workspace_id,
+      tab_id = context.tab_id,
+      pane_id = source_pane_id,
+    }
+  end
   return {
     workspace_id = nonempty(vim.env.HERDR_WORKSPACE_ID) or context.workspace_id,
     tab_id = nonempty(vim.env.HERDR_TAB_ID) or context.tab_id,
@@ -303,10 +349,16 @@ function M:submit()
 end
 
 function M:dump()
-  local _, stdout = Util.exec(
-    { "herdr", "agent", "read", self.herdr_pane_id, "--source", "recent", "--format", "ansi" },
-    { notify = false }
-  )
+  local _, stdout = exec({
+    "herdr",
+    "agent",
+    "read",
+    self.herdr_pane_id,
+    "--source",
+    "recent",
+    "--format",
+    "ansi",
+  })
   return stdout
 end
 
@@ -316,7 +368,7 @@ function M.focus(session)
     Util.warn("Session is not running in a Herdr pane")
     return false
   end
-  return Util.exec({ "herdr", "agent", "focus", session.herdr_pane_id }) ~= nil
+  return exec({ "herdr", "agent", "focus", session.herdr_pane_id }) ~= nil
 end
 
 function M._reset()

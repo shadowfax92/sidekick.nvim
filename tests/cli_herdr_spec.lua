@@ -50,6 +50,7 @@ end
 describe("herdr sessions", function()
   local env_keys = {
     "HERDR_PANE_ID",
+    "HERDR_SCRATCH_SOURCE_PANE",
     "HERDR_SOCKET_PATH",
     "HERDR_TAB_ID",
     "HERDR_WORKSPACE_ID",
@@ -122,6 +123,44 @@ describe("herdr sessions", function()
 
     assert.is_nil(session.herdr_agent_name)
     assert.are.equal("review", session.herdr_pane_label)
+  end)
+
+  it("retries discovery without a stale Herdr socket override", function()
+    vim.env.HERDR_SOCKET_PATH = "/tmp/stale-herdr.sock"
+    local encoded = vim.json.encode(snapshot())
+    local calls = {}
+    Util.exec = function(cmd, opts)
+      calls[#calls + 1] = { cmd = cmd, opts = opts }
+      if #calls == 1 then
+        return nil
+      end
+      return { encoded }, encoded
+    end
+
+    local sessions = Herdr.sessions()
+
+    assert.are.equal(1, #sessions)
+    assert.are.equal(2, #calls)
+    assert.are.same({ vim.fn.exepath("herdr"), "api", "snapshot" }, calls[2].cmd)
+    assert.is_true(calls[2].opts.clear_env)
+    assert.is_nil(vim.tbl_filter(function(value)
+      return value:match("^HERDR_SOCKET_PATH=")
+    end, calls[2].opts.env)[1])
+  end)
+
+  it("uses the Scratch source pane instead of stale inherited Herdr context", function()
+    vim.env.HERDR_PANE_ID = "w1:p1"
+    vim.env.HERDR_TAB_ID = "w1:t1"
+    vim.env.HERDR_WORKSPACE_ID = "w1"
+    vim.env.HERDR_SCRATCH_SOURCE_PANE = "w2:p9"
+    local encoded = vim.json.encode(snapshot())
+    Util.exec = function()
+      return { encoded }, encoded
+    end
+
+    Herdr.sessions()
+
+    assert.are.same({ workspace_id = "w2", tab_id = "w2:t4", pane_id = "w2:p9" }, Herdr.current())
   end)
 
   it("queues bracketed input and Enter as ordered socket requests", function()
