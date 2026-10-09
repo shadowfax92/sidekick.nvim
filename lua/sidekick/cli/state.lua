@@ -272,6 +272,17 @@ function M.auto_attach(filter, opts)
     return {}
   end
 
+  if parent then
+    -- An on-demand fallback may predate the parent agent. Once the parent is
+    -- available it owns this scratch, so retaining that fallback would multicast
+    -- future input to an unrelated pane (or win single-target scope selection).
+    for _, session in pairs(Session.attached()) do
+      if session.id ~= parent[1].session.id then
+        M.detach(M.get_state(session))
+      end
+    end
+  end
+
   local attached = {} ---@type sidekick.cli.State[]
   local newly_attached = {} ---@type sidekick.cli.State[]
   for _, state in ipairs(states) do
@@ -338,6 +349,18 @@ function M.with(cb, opts)
 
   local filter_attached = Util.merge(opts.filter, { attached = true })
   local scope = scope_kind(opts)
+
+  -- Resolve scratch ownership before consulting attached/project-local targets.
+  -- Otherwise a previously attached fallback can hide a newly started parent,
+  -- or survive in multicast's cached target list after auto-attach detaches it.
+  if opts.attach and auto_attach_enabled("on_demand") and Affinity.tmx_parent_pane() then
+    local parent = M.auto_attach(opts.filter, { focus = opts.focus, show = opts.show })
+    if #parent == 1 then
+      apply(parent)
+      return
+    end
+  end
+
   local attached_all = M.get(filter_attached)
   local attached = in_scope(attached_all, scope)
 

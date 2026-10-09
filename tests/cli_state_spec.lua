@@ -11,6 +11,7 @@ describe("cli state routing", function()
   local original_attached
   local original_auto_attach
   local original_cwd
+  local original_detach
   local original_current_scope
   local original_info
   local original_mux_enabled
@@ -56,6 +57,7 @@ describe("cli state routing", function()
     original_attached = Session.attached
     original_auto_attach = Config.cli.mux.auto_attach
     original_cwd = Session.cwd
+    original_detach = Session.detach
     original_current_scope = Affinity.current_scope
     original_info = Util.info
     original_mux_enabled = Config.cli.mux.enabled
@@ -80,6 +82,10 @@ describe("cli state routing", function()
     end
     Session.attach = function(s)
       s._attached = true
+      return s
+    end
+    Session.detach = function(s)
+      s._attached = false
       return s
     end
     Session.attached = function()
@@ -109,6 +115,7 @@ describe("cli state routing", function()
     Session.attach = original_attach
     Session.attached = original_attached
     Session.cwd = original_cwd
+    Session.detach = original_detach
     Session.sessions = original_sessions
     Util.info = original_info
     Util.notify = original_notify
@@ -243,6 +250,11 @@ describe("cli state routing", function()
     Session.sessions = function()
       return running
     end
+    Session.attached = function()
+      return vim.tbl_filter(function(s)
+        return s._attached
+      end, running)
+    end
     Affinity.tmx_parent_pane = function()
       return "%parent"
     end
@@ -258,11 +270,21 @@ describe("cli state routing", function()
       return false
     end)
     assert.is_false(other._attached)
+    State.with(function() end, { attach = true, scope = "project" })
+    assert.is_true(other._attached)
 
     running = { other, parent }
     vim.api.nvim_exec_autocmds("User", { pattern = "HerdrScratchContext" })
     assert.is_true(parent._attached)
     assert.is_false(other._attached)
+
+    for _, multicast in ipairs({ false, true }) do
+      local used = {}
+      State.with(function(state)
+        used[#used + 1] = state.session.id
+      end, { attach = true, multicast = multicast, scope = "project" })
+      assert.are.same({ "parent" }, used)
+    end
 
     parent = session("claude", "parent")
     running = { other, parent }
@@ -270,6 +292,39 @@ describe("cli state routing", function()
     assert.is_true(parent._attached)
     assert.is_false(other._attached)
   end)
+
+  for _, multicast in ipairs({ false, true }) do
+    it(
+      "replaces a scratch fallback with the parent during routing (multicast=" .. tostring(multicast) .. ")",
+      function()
+        local other = session("claude", "other")
+        local parent = session("codex", "parent")
+        other._attached = true
+        Session.sessions = function()
+          return { other, parent }
+        end
+        Session.attached = function()
+          return vim.tbl_filter(function(s)
+            return s._attached
+          end, { other, parent })
+        end
+        Affinity.tmx_parent_pane = function()
+          return "%parent"
+        end
+        Affinity.score = function(_, s)
+          return { exact_cwd = s == other, same_git_root = s == other, same_tmux_pane = s == parent, score = 0 }
+        end
+        local used = {}
+        State.with(function(state)
+          used[#used + 1] = state.session.id
+        end, { attach = true, multicast = multicast, scope = "project" })
+
+        assert.are.same({ "parent" }, used)
+        assert.is_true(parent._attached)
+        assert.is_false(other._attached)
+      end
+    )
+  end
 
   for _, mode in ipairs({ "outside scratch", "startup disabled", "mux disabled" }) do
     it("ignores HerdrScratchContext with " .. mode, function()
