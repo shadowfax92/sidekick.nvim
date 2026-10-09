@@ -100,9 +100,12 @@ local function summarize(states)
   end
   local names = vim.tbl_keys(counts)
   table.sort(names)
-  return table.concat(vim.tbl_map(function(name)
-    return ("%d %s"):format(counts[name], name)
-  end, names), ", ")
+  return table.concat(
+    vim.tbl_map(function(name)
+      return ("%d %s"):format(counts[name], name)
+    end, names),
+    ", "
+  )
 end
 
 ---@param states sidekick.cli.State[]
@@ -248,17 +251,36 @@ function M.scoped(filter, scope)
 end
 
 ---@param filter? sidekick.cli.Filter
----@param opts? {scope?:"cwd"|"project"|"all", show?:boolean, focus?:boolean, multiple?:boolean}
+---@param opts? {scope?:"cwd"|"project"|"all", show?:boolean, focus?:boolean, multiple?:boolean, on_demand?:boolean}
 ---@return sidekick.cli.State[]
 function M.auto_attach(filter, opts)
   opts = opts or {}
-  local states = in_scope(M.get(Util.merge(filter, { started = true })), opts.scope or "project")
-  states = unique_tmx_parent(states) or states
+  local states = M.get(Util.merge(filter, { started = true }))
+  -- Scratch ownership comes from the parent pane, whose agent may be working in
+  -- another project. Scope filtering first would discard that authoritative target.
+  local parent = unique_tmx_parent(states)
+  if Affinity.tmx_parent_pane() and not parent and not opts.on_demand then
+    return {}
+  end
+  -- Passive startup/refresh must wait for the parent agent; only a user-requested
+  -- target may fall back to the usual project selection when no parent is found.
+  states = parent or in_scope(states, opts.scope or "project")
   if #states == 0 then
     return {}
   end
   if opts.multiple == false and #states ~= 1 then
     return {}
+  end
+
+  if parent then
+    -- An on-demand fallback may predate the parent agent. Once the parent is
+    -- available it owns this scratch, so retaining that fallback would multicast
+    -- future input to an unrelated pane (or win single-target scope selection).
+    for _, session in pairs(Session.attached()) do
+      if session.id ~= parent[1].session.id then
+        M.detach(M.get_state(session))
+      end
+    end
   end
 
   local attached = {} ---@type sidekick.cli.State[]
@@ -272,11 +294,13 @@ function M.auto_attach(filter, opts)
   end
 
   if #newly_attached > 0 then
-    Util.info(("Auto-attached %d agent%s (%s)"):format(
-      #newly_attached,
-      #newly_attached == 1 and "" or "s",
-      summarize(newly_attached)
-    ))
+    Util.info(
+      ("Auto-attached %d agent%s (%s)"):format(
+        #newly_attached,
+        #newly_attached == 1 and "" or "s",
+        summarize(newly_attached)
+      )
+    )
   end
 
   return attached
@@ -325,16 +349,33 @@ function M.with(cb, opts)
 
   local filter_attached = Util.merge(opts.filter, { attached = true })
   local scope = scope_kind(opts)
+
+  -- Resolve scratch ownership before consulting attached/project-local targets.
+  -- Otherwise a previously attached fallback can hide a newly started parent,
+  -- or survive in multicast's cached target list after auto-attach detaches it.
+  if opts.attach and auto_attach_enabled("on_demand") and Affinity.tmx_parent_pane() then
+    local parent = M.auto_attach(opts.filter, { focus = opts.focus, show = opts.show })
+    if #parent == 1 then
+      apply(parent)
+      return
+    end
+  end
+
   local attached_all = M.get(filter_attached)
   local attached = in_scope(attached_all, scope)
 
   if opts.multicast then
     local targets = attached_all
     if opts.attach and auto_attach_enabled("on_demand") then
-      targets = dedupe(vim.list_extend(vim.deepcopy(attached_all), M.auto_attach(
-        opts.filter,
-        { focus = opts.focus, multiple = true, scope = scope, show = opts.show }
-      )))
+      targets = dedupe(
+        vim.list_extend(
+          vim.deepcopy(attached_all),
+          M.auto_attach(
+            opts.filter,
+            { focus = opts.focus, multiple = true, scope = scope, show = opts.show, on_demand = true }
+          )
+        )
+      )
     end
 
     if #targets > 0 then
@@ -346,7 +387,13 @@ function M.with(cb, opts)
   end
 
   if #attached == 0 and opts.attach and auto_attach_enabled("on_demand") then
-    local auto = M.auto_attach(opts.filter, { focus = opts.focus, multiple = false, scope = scope, show = opts.show })
+    local auto = M.auto_attach(opts.filter, {
+      focus = opts.focus,
+      multiple = false,
+      scope = scope,
+      show = opts.show,
+      on_demand = true,
+    })
     if #auto == 1 then
       use(auto[1])
       return
