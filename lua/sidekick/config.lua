@@ -104,12 +104,12 @@ local defaults = {
       nav = nil,
     },
     ---@class sidekick.cli.AutoAttach
-    ---@field startup? boolean auto-attach matching sessions on `VimEnter`
+    ---@field startup? boolean auto-attach on `VimEnter` and scratch `User HerdrScratchContext` refreshes
     ---@field on_demand? boolean auto-attach matching sessions when a CLI flow requests a target
     ---@field scope? "cwd"|"project"|"all" scope used for startup and on-demand auto-attach
     ---@class sidekick.cli.Mux
     ---@field backend? "herdr"|"tmux"|"zellij" Multiplexer backend to persist CLI sessions
-    ---@field tmx_scratch? boolean Prefer the tmx scratch parent pane when `TMX_SCRATCH=1`
+    ---@field tmx_scratch? boolean Auto-attach only the scratch parent agent, regardless of scope, when `TMX_SCRATCH=1`
     mux = {
       backend = vim.env.HERDR_ENV == "1" and "herdr" or vim.env.ZELLIJ and "zellij" or "tmux",
       enabled = false,
@@ -267,6 +267,18 @@ function M.setup(opts)
       local auto_attach = function()
         require("sidekick.cli").auto_attach({ focus = false })
       end
+      -- The optional herdr-scratch companion emits this on every popup show.
+      -- Rediscover sessions then: the parent's agent can start/restart while the
+      -- editor stays alive. VimEnter still works when no companion is installed.
+      vim.api.nvim_create_autocmd("User", {
+        group = M.augroup,
+        pattern = "HerdrScratchContext",
+        callback = function()
+          if require("sidekick.cli.affinity").tmx_parent_pane() then
+            auto_attach()
+          end
+        end,
+      })
       if vim.v.vim_did_enter == 1 then
         vim.defer_fn(auto_attach, 100)
       else

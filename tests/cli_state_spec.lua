@@ -13,6 +13,8 @@ describe("cli state routing", function()
   local original_cwd
   local original_current_scope
   local original_info
+  local original_mux_enabled
+  local original_nes_enabled
   local original_notify
   local original_score
   local original_select
@@ -21,6 +23,8 @@ describe("cli state routing", function()
   local original_terminal_get
   local original_tmx_parent_pane
   local original_tools
+  local original_status_setup
+  local configured
 
   local function tool(name)
     return { name = name }
@@ -54,6 +58,8 @@ describe("cli state routing", function()
     original_cwd = Session.cwd
     original_current_scope = Affinity.current_scope
     original_info = Util.info
+    original_mux_enabled = Config.cli.mux.enabled
+    original_nes_enabled = Config.nes.enabled
     original_notify = Util.notify
     original_score = Affinity.score
     original_select = require("sidekick.cli.ui.select").select
@@ -62,6 +68,8 @@ describe("cli state routing", function()
     original_terminal_get = require("sidekick.cli.terminal").get
     original_tmx_parent_pane = Affinity.tmx_parent_pane
     original_tools = Config.tools
+    original_status_setup = require("sidekick.status").setup
+    configured = false
 
     Config.cli.mux.auto_attach = { on_demand = true, scope = "project", startup = true }
     Config.tools = function()
@@ -83,6 +91,7 @@ describe("cli state routing", function()
     Affinity.current_scope = function()
       return { cwd = "/repo/current" }
     end
+    Affinity.tmx_parent_pane = function() end
     Util.notify = function() end
     vim.schedule_wrap = function(cb)
       return cb
@@ -94,6 +103,8 @@ describe("cli state routing", function()
     Affinity.score = original_score
     Affinity.tmx_parent_pane = original_tmx_parent_pane
     Config.cli.mux.auto_attach = original_auto_attach
+    Config.cli.mux.enabled = original_mux_enabled
+    Config.nes.enabled = original_nes_enabled
     Config.tools = original_tools
     Session.attach = original_attach
     Session.attached = original_attached
@@ -104,6 +115,10 @@ describe("cli state routing", function()
     vim.schedule_wrap = original_schedule_wrap
     require("sidekick.cli.terminal").get = original_terminal_get
     require("sidekick.cli.ui.select").select = original_select
+    require("sidekick.status").setup = original_status_setup
+    if configured then
+      vim.api.nvim_clear_autocmds({ group = Config.augroup })
+    end
   end)
 
   it("auto_attaches all started sessions in project scope", function()
@@ -115,9 +130,25 @@ describe("cli state routing", function()
     end
     Affinity.score = function(_, s)
       if s.id == "outside" then
-        return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+        return {
+          exact_cwd = false,
+          same_git_root = false,
+          same_tmux_session = false,
+          same_tmux_window = false,
+          same_tmux_pane = false,
+          score = 0,
+          badges = {},
+        }
       end
-      return { exact_cwd = s.id == "scoped-1", same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 500, badges = {} }
+      return {
+        exact_cwd = s.id == "scoped-1",
+        same_git_root = true,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 500,
+        badges = {},
+      }
     end
 
     local attached = State.auto_attach(nil, { multiple = true, scope = "project" })
@@ -128,34 +159,144 @@ describe("cli state routing", function()
     assert.is_false(outside._attached)
   end)
 
-  it("auto_attaches only the unique tmx scratch parent when available", function()
+  for _, scope in ipairs({ "cwd", "project", "all" }) do
+    it("auto_attaches the cross-project scratch parent before " .. scope .. " scope", function()
+      local parent = session("codex", "parent")
+      local other = session("claude", "other")
+      Session.sessions = function()
+        return { parent, other }
+      end
+      Affinity.tmx_parent_pane = function()
+        return "%parent"
+      end
+      Affinity.score = function(_, s)
+        return {
+          exact_cwd = s.id == "other",
+          same_git_root = s.id == "other",
+          same_tmux_session = false,
+          same_tmux_window = false,
+          same_tmux_pane = s.id == "parent",
+          score = s.id == "parent" and 525 or 500,
+          badges = {},
+        }
+      end
+
+      local attached = State.auto_attach(nil, { multiple = true, scope = scope })
+
+      assert.are.equal(1, #attached)
+      assert.are.equal("parent", attached[1].session.id)
+      assert.is_true(parent._attached)
+      assert.is_false(other._attached)
+    end)
+  end
+
+  for _, ambiguous in ipairs({ false, true }) do
+    it("leaves scratch auto-attach empty when the parent is " .. (ambiguous and "ambiguous" or "absent"), function()
+      local other = session("claude", "other")
+      local parents = ambiguous and { session("codex", "parent-1"), session("claude", "parent-2") } or {}
+      Session.sessions = function()
+        return vim.list_extend({ other }, parents)
+      end
+      Affinity.tmx_parent_pane = function()
+        return "%parent"
+      end
+      Affinity.score = function(_, s)
+        return { exact_cwd = s == other, same_git_root = s == other, same_tmux_pane = s ~= other, score = 0 }
+      end
+
+      assert.are.same({}, State.auto_attach(nil, { multiple = true, scope = "project" }))
+      assert.is_false(other._attached)
+      for _, parent in ipairs(parents) do
+        assert.is_false(parent._attached)
+      end
+    end)
+  end
+
+  for _, multicast in ipairs({ false, true }) do
+    it("keeps on-demand scope fallback without a scratch parent (multicast=" .. tostring(multicast) .. ")", function()
+      local other = session("claude", "other")
+      local outside = session("codex", "outside")
+      Session.sessions = function()
+        return { other, outside }
+      end
+      Affinity.tmx_parent_pane = function()
+        return "%parent"
+      end
+      Affinity.score = function(_, s)
+        return { exact_cwd = s == other, same_git_root = s == other, same_tmux_pane = false, score = 0 }
+      end
+      local used = {}
+      State.with(function(state)
+        used[#used + 1] = state.session.id
+      end, { attach = true, multicast = multicast, scope = "project" })
+
+      assert.are.same({ "other" }, used)
+      assert.is_true(other._attached)
+      assert.is_false(outside._attached)
+    end)
+  end
+
+  it("refreshes the scratch parent on every HerdrScratchContext event", function()
     local parent = session("codex", "parent")
     local other = session("claude", "other")
+    local running = { other }
     Session.sessions = function()
-      return { parent, other }
+      return running
     end
     Affinity.tmx_parent_pane = function()
       return "%parent"
     end
     Affinity.score = function(_, s)
-      return {
-        exact_cwd = false,
-        same_git_root = true,
-        same_tmux_session = false,
-        same_tmux_window = false,
-        same_tmux_pane = s.id == "parent",
-        score = s.id == "parent" and 525 or 500,
-        badges = {},
-      }
+      return { exact_cwd = s == other, same_git_root = s == other, same_tmux_pane = s.id == "parent", score = 0 }
     end
+    require("sidekick.status").setup = function() end
+    configured = true
+    Config.setup({ nes = { enabled = false }, cli = { mux = { enabled = true } } })
+    -- Let setup and the startup retry settle before simulating an agent starting
+    -- in the parent of an already-running scratch editor.
+    vim.wait(150, function()
+      return false
+    end)
+    assert.is_false(other._attached)
 
-    local attached = State.auto_attach(nil, { multiple = true, scope = "project" })
+    running = { other, parent }
+    vim.api.nvim_exec_autocmds("User", { pattern = "HerdrScratchContext" })
+    assert.is_true(parent._attached)
+    assert.is_false(other._attached)
 
-    assert.are.equal(1, #attached)
-    assert.are.equal("parent", attached[1].session.id)
+    parent = session("claude", "parent")
+    running = { other, parent }
+    vim.api.nvim_exec_autocmds("User", { pattern = "HerdrScratchContext" })
     assert.is_true(parent._attached)
     assert.is_false(other._attached)
   end)
+
+  for _, mode in ipairs({ "outside scratch", "startup disabled", "mux disabled" }) do
+    it("ignores HerdrScratchContext with " .. mode, function()
+      local discovered = 0
+      Session.sessions = function()
+        discovered = discovered + 1
+        return {}
+      end
+      Affinity.tmx_parent_pane = function()
+        return mode ~= "outside scratch" and "%parent" or nil
+      end
+      require("sidekick.status").setup = function() end
+      configured = true
+      Config.setup({
+        nes = { enabled = false },
+        cli = { mux = { enabled = mode ~= "mux disabled", auto_attach = { startup = mode ~= "startup disabled" } } },
+      })
+      vim.wait(150, function()
+        return false
+      end)
+      discovered = 0
+
+      vim.api.nvim_exec_autocmds("User", { pattern = "HerdrScratchContext" })
+
+      assert.are.equal(0, discovered)
+    end)
+  end
 
   it("multicast sends to every scoped session", function()
     local scoped_1 = session("claude", "scoped-1")
@@ -170,9 +311,25 @@ describe("cli state routing", function()
     end
     Affinity.score = function(_, s)
       if s.id == "outside" then
-        return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+        return {
+          exact_cwd = false,
+          same_git_root = false,
+          same_tmux_session = false,
+          same_tmux_window = false,
+          same_tmux_pane = false,
+          score = 0,
+          badges = {},
+        }
       end
-      return { exact_cwd = s.id == "scoped-1", same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 500, badges = {} }
+      return {
+        exact_cwd = s.id == "scoped-1",
+        same_git_root = true,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 500,
+        badges = {},
+      }
     end
 
     local used = {}
@@ -202,9 +359,25 @@ describe("cli state routing", function()
     end
     Affinity.score = function(_, s)
       if s.id == "scoped" then
-        return { exact_cwd = false, same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 500, badges = {} }
+        return {
+          exact_cwd = false,
+          same_git_root = true,
+          same_tmux_session = false,
+          same_tmux_window = false,
+          same_tmux_pane = false,
+          score = 500,
+          badges = {},
+        }
       end
-      return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+      return {
+        exact_cwd = false,
+        same_git_root = false,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 0,
+        badges = {},
+      }
     end
 
     local used = {}
@@ -231,7 +404,15 @@ describe("cli state routing", function()
       return { codex = { name = "codex", cmd = { "sh" } } }
     end
     Affinity.score = function()
-      return { exact_cwd = false, same_git_root = false, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 0, badges = {} }
+      return {
+        exact_cwd = false,
+        same_git_root = false,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 0,
+        badges = {},
+      }
     end
 
     local states = State.get()
@@ -252,7 +433,15 @@ describe("cli state routing", function()
       return { stale, fresh }
     end
     Affinity.score = function()
-      return { exact_cwd = true, same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 1500, badges = {} }
+      return {
+        exact_cwd = true,
+        same_git_root = true,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 1500,
+        badges = {},
+      }
     end
 
     local states = State.get()
@@ -273,7 +462,15 @@ describe("cli state routing", function()
       return { scoped_1, scoped_2 }
     end
     Affinity.score = function()
-      return { exact_cwd = false, same_git_root = true, same_tmux_session = false, same_tmux_window = false, same_tmux_pane = false, score = 500, badges = {} }
+      return {
+        exact_cwd = false,
+        same_git_root = true,
+        same_tmux_session = false,
+        same_tmux_window = false,
+        same_tmux_pane = false,
+        score = 500,
+        badges = {},
+      }
     end
 
     local called = {}
