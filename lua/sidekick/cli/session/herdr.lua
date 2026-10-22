@@ -110,6 +110,10 @@ local function exec(cmd)
   if not remote() then
     return Util.exec(cmd, opts)
   end
+  -- A forwarded socket can accept a connection after its SSH link stops
+  -- answering. Bound every remote CLI wait so discovery/read/focus cannot
+  -- freeze the editor; the existing failure path never discovers another server.
+  opts.timeout = 3000
   local ok, lines, stdout = pcall(Util.exec, cmd, opts)
   if not ok or not stdout then
     Util.error(connection_error())

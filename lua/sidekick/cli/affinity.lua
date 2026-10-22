@@ -165,11 +165,18 @@ function M.current_scope()
   }
 end
 
---- SSH paths belong to another machine in a local editor. Remote scratch uses
---- those projected paths on the remote host and keeps its authoritative parent.
+--- Project paths are comparable only on the editor's machine. Discovery keeps
+--- foreign sessions visible for manual selection; automatic routing excludes them.
 ---@param session? sidekick.cli.Session|sidekick.cli.session.State
 function M.is_foreign(session)
-  return session ~= nil and session.herdr_ssh ~= nil and vim.env.HERDR_SSH_PANES ~= "1"
+  if not session then
+    return false
+  end
+  if vim.env.HERDR_SSH_PANES == "1" then
+    local host = vim.env.HERDR_SSH_PANES_HOST
+    return not host or type(session.herdr_ssh) ~= "table" or session.herdr_ssh.host ~= host
+  end
+  return session.herdr_ssh ~= nil
 end
 
 ---@param scope sidekick.cli.Scope

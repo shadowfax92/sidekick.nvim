@@ -286,6 +286,7 @@ describe("cli select routing", function()
   local original_scoped
   local original_ui_select
   local original_ssh_panes
+  local original_ssh_host
 
   local function candidate(name, same_pane)
     return {
@@ -300,7 +301,9 @@ describe("cli select routing", function()
     original_scoped = State.scoped
     original_ui_select = vim.ui.select
     original_ssh_panes = vim.env.HERDR_SSH_PANES
+    original_ssh_host = vim.env.HERDR_SSH_PANES_HOST
     vim.env.HERDR_SSH_PANES = nil
+    vim.env.HERDR_SSH_PANES_HOST = nil
   end)
 
   after_each(function()
@@ -308,6 +311,7 @@ describe("cli select routing", function()
     State.scoped = original_scoped
     vim.ui.select = original_ui_select
     vim.env.HERDR_SSH_PANES = original_ssh_panes
+    vim.env.HERDR_SSH_PANES_HOST = original_ssh_host
   end)
 
   it("falls back to the unscoped picker when scoped matches are empty", function()
@@ -386,6 +390,7 @@ describe("cli select routing", function()
   for _, remote in ipairs({ false, true }) do
     it("requires a manual choice for a lone SSH agent in local nvim: " .. tostring(not remote), function()
       vim.env.HERDR_SSH_PANES = remote and "1" or nil
+      vim.env.HERDR_SSH_PANES_HOST = remote and "studio" or nil
       local ssh = candidate("codex", true)
       ssh.session = { herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" } }
       State.get = function()
@@ -405,6 +410,31 @@ describe("cli select routing", function()
       })
       assert.are.equal(not remote, picked)
       assert.are.equal(ssh, selected)
+    end)
+  end
+
+  for _, host in ipairs({ false, "server" }) do
+    it("requires a manual choice for a foreign lone agent in remote nvim: " .. tostring(host), function()
+      vim.env.HERDR_SSH_PANES = "1"
+      vim.env.HERDR_SSH_PANES_HOST = "studio"
+      local agent = candidate("codex", true)
+      agent.session = { herdr_ssh = host and { host = host } or nil }
+      State.get = function()
+        return { agent }
+      end
+      local picked, selected = false, nil
+      vim.ui.select = function(items, _, cb)
+        picked = true
+        cb(items[1])
+      end
+      Select.select({
+        auto = true,
+        cb = function(state)
+          selected = state
+        end,
+      })
+      assert.is_true(picked)
+      assert.are.equal(agent, selected)
     end)
   end
 end)
