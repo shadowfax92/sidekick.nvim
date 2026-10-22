@@ -10,6 +10,7 @@ describe("cli affinity", function()
     "HERDR_ENV",
     "HERDR_PANE_ID",
     "HERDR_SSH_PANES",
+    "HERDR_SSH_PANES_HOST",
     "HERDR_TAB_ID",
     "HERDR_WORKSPACE_ID",
     "TMUX_PANE",
@@ -213,6 +214,7 @@ describe("cli affinity", function()
   for _, remote in ipairs({ false, true }) do
     it("matches SSH project paths only from a remote editor: " .. tostring(remote), function()
       vim.env.HERDR_SSH_PANES = remote and "1" or nil
+      vim.env.HERDR_SSH_PANES_HOST = remote and "studio" or nil
       local looked_up = false
       Affinity.project = function(path)
         looked_up = true
@@ -231,6 +233,29 @@ describe("cli affinity", function()
       assert.are.equal(remote, affinity.same_git_root)
       assert.are.equal(remote, Affinity.in_scope(affinity, "project"))
       assert.are.equal(remote, Affinity.in_scope(affinity, "cwd"))
+    end)
+  end
+
+  for _, host in ipairs({ false, "server", "studio" }) do
+    it("matches only this remote host for project affinity: " .. tostring(host), function()
+      vim.env.HERDR_SSH_PANES = "1"
+      vim.env.HERDR_SSH_PANES_HOST = "studio"
+      local looked_up = false
+      Affinity.project = function(path)
+        looked_up = true
+        return { cwd = path, worktree_root = path }
+      end
+      local affinity = Affinity.score({
+        cwd = "/repo/app",
+        project = { cwd = "/repo/app", worktree_root = "/repo/app" },
+      }, {
+        backend = "herdr",
+        cwd = "/repo/app",
+        herdr_ssh = host and { host = host } or nil,
+      })
+      assert.are.equal(host == "studio", looked_up)
+      assert.are.equal(host == "studio", affinity.exact_cwd)
+      assert.are.equal(host == "studio", affinity.same_git_root)
     end)
   end
 

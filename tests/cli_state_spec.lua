@@ -27,6 +27,7 @@ describe("cli state routing", function()
   local original_status_setup
   local configured
   local original_ssh_panes
+  local original_ssh_host
 
   local function tool(name)
     return { name = name }
@@ -55,7 +56,9 @@ describe("cli state routing", function()
 
   before_each(function()
     original_ssh_panes = vim.env.HERDR_SSH_PANES
+    original_ssh_host = vim.env.HERDR_SSH_PANES_HOST
     vim.env.HERDR_SSH_PANES = nil
+    vim.env.HERDR_SSH_PANES_HOST = nil
     original_attach = Session.attach
     original_attached = Session.attached
     original_auto_attach = Config.cli.mux.auto_attach
@@ -109,6 +112,7 @@ describe("cli state routing", function()
 
   after_each(function()
     vim.env.HERDR_SSH_PANES = original_ssh_panes
+    vim.env.HERDR_SSH_PANES_HOST = original_ssh_host
     Affinity.current_scope = original_current_scope
     Affinity.score = original_score
     Affinity.tmx_parent_pane = original_tmx_parent_pane
@@ -192,6 +196,7 @@ describe("cli state routing", function()
 
   it("keeps the remote scratch parent authoritative across projects", function()
     vim.env.HERDR_SSH_PANES = "1"
+    vim.env.HERDR_SSH_PANES_HOST = "studio"
     local parent = session("codex", "parent")
     parent.backend = "herdr"
     parent.herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" }
@@ -206,6 +211,28 @@ describe("cli state routing", function()
     end
     assert.are.equal(parent, State.auto_attach(nil, { scope = "project" })[1].session)
   end)
+
+  for _, host in ipairs({ false, "server", "studio" }) do
+    it("keeps foreign agents manual in remote on-demand routing: " .. tostring(host), function()
+      vim.env.HERDR_SSH_PANES = "1"
+      vim.env.HERDR_SSH_PANES_HOST = "studio"
+      local agent = session("claude", "agent")
+      agent.backend = "herdr"
+      agent.herdr_ssh = host and { host = host } or nil
+      Session.sessions = function()
+        return { agent }
+      end
+      Affinity.score = function()
+        return { exact_cwd = true, same_git_root = true, score = 1500, badges = {} }
+      end
+      State.auto_attach(nil, { scope = "project", on_demand = true })
+      assert.are.equal(host == "studio", agent._attached)
+      local states = State.get({ started = true })
+      assert.are.equal(1, #states)
+      State.attach(states[1])
+      assert.is_true(agent._attached)
+    end)
+  end
 
   for _, scope in ipairs({ "cwd", "project", "all" }) do
     it("auto_attaches the cross-project scratch parent before " .. scope .. " scope", function()

@@ -62,6 +62,7 @@ describe("herdr sessions", function()
   local original_request
   local original_error
   local original_new_pipe
+  local original_system
   local errors
   local pipes
 
@@ -74,6 +75,7 @@ describe("herdr sessions", function()
     original_request = Herdr.request
     original_error = Util.error
     original_new_pipe = vim.uv.new_pipe
+    original_system = vim.system
     errors = {}
     pipes = {}
     Util.error = function(message)
@@ -88,6 +90,7 @@ describe("herdr sessions", function()
     Herdr._reset()
     Util.error = original_error
     vim.uv.new_pipe = original_new_pipe
+    vim.system = original_system
     for _, key in ipairs(env_keys) do
       vim.env[key] = original_env[key]
     end
@@ -239,7 +242,8 @@ describe("herdr sessions", function()
   it("uses an overridden local binary for status discovery and focus", function()
     vim.env.HERDR_BIN_PATH = "/payload/bin/herdr"
     local calls = {}
-    Util.exec = function(cmd)
+    Util.exec = function(cmd, opts)
+      assert.is_nil(opts.timeout)
       calls[#calls + 1] = cmd
       return { "socket: /tmp/local.sock" }, "socket: /tmp/local.sock"
     end
@@ -248,6 +252,50 @@ describe("herdr sessions", function()
       { "/payload/bin/herdr", "status", "server" },
       { "/payload/bin/herdr", "agent", "focus", "w2:p9" },
     }, calls)
+  end)
+
+  it("bounds remote snapshot, read and focus and reports timed out calls", function()
+    vim.env.HERDR_SSH_PANES = "1"
+    vim.env.HERDR_BIN_PATH = "/payload/bin/herdr"
+    vim.env.HERDR_SOCKET_PATH = "/tmp/herdr-sp-stable.sock"
+    Util.exec = original_exec
+    local calls = {}
+    vim.system = function(cmd, opts)
+      assert.is_true(type(opts.timeout) == "number" and opts.timeout > 0 and opts.timeout <= 5000)
+      calls[#calls + 1] = cmd
+      return {
+        wait = function()
+          return { code = 124, signal = 15, stdout = "", stderr = "" }
+        end,
+      }
+    end
+    assert.are.same({}, Herdr.sessions())
+    assert.is_nil(setmetatable({ herdr_pane_id = "w2:p9" }, Herdr):dump())
+    assert.is_false(Herdr.focus({ herdr_pane_id = "w2:p9" }))
+    assert.are.equal(3, #calls)
+    assert.are.same({
+      "Herdr (laptop) unreachable: SSH link down",
+      "Herdr (laptop) unreachable: SSH link down",
+      "Herdr (laptop) unreachable: SSH link down",
+    }, errors)
+  end)
+
+  it("terminates a real unresponsive remote CLI without freezing discovery", function()
+    local binary = vim.fn.tempname()
+    vim.fn.writefile({ "#!/bin/sh", "exec sleep 30" }, binary)
+    assert(vim.uv.fs_chmod(binary, 448))
+    vim.env.HERDR_SSH_PANES = "1"
+    vim.env.HERDR_BIN_PATH = binary
+    vim.env.HERDR_SOCKET_PATH = "/tmp/herdr-sp-stable.sock"
+    Util.exec = original_exec
+    local start = vim.uv.hrtime()
+    local ok, result = pcall(Herdr.sessions)
+    local elapsed_ms = (vim.uv.hrtime() - start) / 1e6
+    vim.fn.delete(binary)
+    assert.is_true(ok)
+    assert.are.same({}, result)
+    assert.is_true(elapsed_ms < 6000)
+    assert.are.same({ "Herdr (laptop) unreachable: SSH link down" }, errors)
   end)
 
   it("reports an unavailable remote payload without using PATH or socket fallback", function()

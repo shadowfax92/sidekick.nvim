@@ -257,7 +257,7 @@ function M.auto_attach(filter, opts)
   opts = opts or {}
   local states = M.get(Util.merge(filter, { started = true }))
   -- Identical absolute paths on the laptop and Studio are unrelated projects.
-  -- Keep SSH agents in discovery/pickers, but require a local user's selection.
+  -- Keep other machines in discovery/pickers, but require a manual selection.
   states = vim.tbl_filter(function(state)
     return not Affinity.is_foreign(state.session)
   end, states)
