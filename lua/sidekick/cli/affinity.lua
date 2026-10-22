@@ -165,11 +165,19 @@ function M.current_scope()
   }
 end
 
+--- SSH paths belong to another machine in a local editor. Remote scratch uses
+--- those projected paths on the remote host and keeps its authoritative parent.
+---@param session? sidekick.cli.Session|sidekick.cli.session.State
+function M.is_foreign(session)
+  return session ~= nil and session.herdr_ssh ~= nil and vim.env.HERDR_SSH_PANES ~= "1"
+end
+
 ---@param scope sidekick.cli.Scope
 ---@param session sidekick.cli.Session|sidekick.cli.session.State
 ---@return sidekick.cli.Affinity
 function M.score(scope, session)
-  local session_project = M.project(session.cwd)
+  local foreign = M.is_foreign(session)
+  local session_project = not foreign and M.project(session.cwd) or nil
   local herdr = (session.mux_backend or session.backend) == "herdr"
   local same_session
   local same_pane
@@ -181,7 +189,7 @@ function M.score(scope, session)
     same_pane = scope.tmux_pane_id ~= nil and scope.tmux_pane_id == session.tmux_pane_id
   end
   local affinity = {
-    exact_cwd = scope.cwd == session.cwd,
+    exact_cwd = not foreign and scope.cwd == session.cwd,
     same_git_root = false,
     same_tmux_session = same_session,
     same_tmux_window = false,
@@ -192,7 +200,8 @@ function M.score(scope, session)
 
   local scope_project = scope.project
   if scope_project and session_project then
-    affinity.same_git_root = project_id(scope_project) ~= nil and project_id(scope_project) == project_id(session_project)
+    affinity.same_git_root = project_id(scope_project) ~= nil
+      and project_id(scope_project) == project_id(session_project)
   end
 
   if affinity.same_tmux_session then

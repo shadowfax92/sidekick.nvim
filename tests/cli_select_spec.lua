@@ -1,7 +1,7 @@
 ---@module 'luassert'
 
-local Select = require("sidekick.cli.ui.select")
 local Fzf = require("sidekick.cli.ui.select.fzf")
+local Select = require("sidekick.cli.ui.select")
 
 local function text(parts)
   return table.concat(vim.tbl_map(function(part)
@@ -285,6 +285,7 @@ describe("cli select routing", function()
   local original_get
   local original_scoped
   local original_ui_select
+  local original_ssh_panes
 
   local function candidate(name, same_pane)
     return {
@@ -298,12 +299,15 @@ describe("cli select routing", function()
     original_get = State.get
     original_scoped = State.scoped
     original_ui_select = vim.ui.select
+    original_ssh_panes = vim.env.HERDR_SSH_PANES
+    vim.env.HERDR_SSH_PANES = nil
   end)
 
   after_each(function()
     State.get = original_get
     State.scoped = original_scoped
     vim.ui.select = original_ui_select
+    vim.env.HERDR_SSH_PANES = original_ssh_panes
   end)
 
   it("falls back to the unscoped picker when scoped matches are empty", function()
@@ -378,4 +382,29 @@ describe("cli select routing", function()
     assert.are.equal(first, selected)
     assert.are.equal(1, picker_calls)
   end)
+
+  for _, remote in ipairs({ false, true }) do
+    it("requires a manual choice for a lone SSH agent in local nvim: " .. tostring(not remote), function()
+      vim.env.HERDR_SSH_PANES = remote and "1" or nil
+      local ssh = candidate("codex", true)
+      ssh.session = { herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" } }
+      State.get = function()
+        return { ssh }
+      end
+      local picked = false
+      vim.ui.select = function(items, _, cb)
+        picked = true
+        cb(items[1])
+      end
+      local selected
+      Select.select({
+        auto = true,
+        cb = function(state)
+          selected = state
+        end,
+      })
+      assert.are.equal(not remote, picked)
+      assert.are.equal(ssh, selected)
+    end)
+  end
 end)

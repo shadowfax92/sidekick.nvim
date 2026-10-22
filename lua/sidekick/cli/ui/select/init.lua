@@ -267,13 +267,15 @@ function M.select(opts)
     return
   elseif opts.auto then
     local same_pane = vim.tbl_filter(function(tool)
-      return tool.affinity and tool.affinity.same_tmux_pane
+      return not Affinity.is_foreign(tool.session) and tool.affinity and tool.affinity.same_tmux_pane
     end, tools)
     if #same_pane == 1 then
       on_select(same_pane[1])
       return
     end
-    if #tools == 1 then
+    -- Even a lone SSH candidate needs an explicit choice in local nvim: it may
+    -- have reached this fallback picker only because its remote path matched.
+    if #tools == 1 and not Affinity.is_foreign(tools[1].session) then
       on_select(tools[1])
       return
     end
