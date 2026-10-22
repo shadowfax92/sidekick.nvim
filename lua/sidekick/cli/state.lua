@@ -256,6 +256,11 @@ end
 function M.auto_attach(filter, opts)
   opts = opts or {}
   local states = M.get(Util.merge(filter, { started = true }))
+  -- Identical absolute paths on the laptop and Studio are unrelated projects.
+  -- Keep SSH agents in discovery/pickers, but require a local user's selection.
+  states = vim.tbl_filter(function(state)
+    return not Affinity.is_foreign(state.session)
+  end, states)
   -- Scratch ownership comes from the parent pane, whose agent may be working in
   -- another project. Scope filtering first would discard that authoritative target.
   local parent = unique_tmx_parent(states)

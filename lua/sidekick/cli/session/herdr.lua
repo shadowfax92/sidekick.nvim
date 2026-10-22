@@ -27,6 +27,15 @@ local function nonempty(value)
   return type(value) == "string" and value ~= "" and value or nil
 end
 
+local function remote()
+  -- Socket callbacks run in fast events, where vim.env's Vimscript getter is unsafe.
+  return vim.uv.os_getenv("HERDR_SSH_PANES") == "1"
+end
+
+local function connection_error(message)
+  return remote() and "Herdr (laptop) unreachable: SSH link down" or message
+end
+
 local function without_socket_environment()
   local ret = {}
   for key, value in pairs(vim.fn.environ()) do
@@ -68,24 +77,16 @@ local function index(items, key)
   return ret
 end
 
-local function decode_snapshot()
-  local _, stdout = retry_without_socket({ "herdr", "api", "snapshot" })
-  if not stdout then
-    return
-  end
-  local ok, response = pcall(vim.json.decode, stdout)
-  if not ok or type(response) ~= "table" then
-    Util.debug("Failed to decode Herdr session snapshot", response)
-    return
-  end
-  return response.result and response.result.snapshot or nil
-end
-
 local function resolve_socket_path()
+  -- Remote scratch owns only a forwarded laptop socket. Server discovery or
+  -- dropping this override could reach the Studio's server with colliding pane ids.
+  if remote() then
+    return nonempty(vim.env.HERDR_SOCKET_PATH)
+  end
   if socket_path then
     return socket_path
   end
-  local lines = retry_without_socket({ "herdr", "status", "server" })
+  local lines = retry_without_socket({ vim.env.HERDR_BIN_PATH or "herdr", "status", "server" })
   for _, line in ipairs(lines or {}) do
     socket_path = line:match("^socket:%s+(.+)$")
     if socket_path then
@@ -98,10 +99,42 @@ end
 
 local function exec(cmd)
   local path = resolve_socket_path()
-  return Util.exec(cmd, {
+  if remote() and not path then
+    Util.error(connection_error())
+    return
+  end
+  local opts = {
     notify = false,
     env = path and { HERDR_SOCKET_PATH = path } or nil,
-  })
+  }
+  if not remote() then
+    return Util.exec(cmd, opts)
+  end
+  local ok, lines, stdout = pcall(Util.exec, cmd, opts)
+  if not ok or not stdout then
+    Util.error(connection_error())
+    return
+  end
+  return lines, stdout
+end
+
+local function decode_snapshot()
+  local cmd = { vim.env.HERDR_BIN_PATH or "herdr", "api", "snapshot" }
+  local _, stdout
+  if remote() then
+    _, stdout = exec(cmd)
+  else
+    _, stdout = retry_without_socket(cmd)
+  end
+  if not stdout then
+    return
+  end
+  local ok, response = pcall(vim.json.decode, stdout)
+  if not ok or type(response) ~= "table" then
+    Util.debug("Failed to decode Herdr session snapshot", response)
+    return
+  end
+  return response.result and response.result.snapshot or nil
 end
 
 local function finish_callbacks(message)
@@ -122,11 +155,14 @@ local function disconnect(pipe, message)
   client.buffer = ""
   client.connected = false
   client.connecting = false
+  -- A failed write/read may already have delivered input. Drop pending work;
+  -- only the next user action reconnects through the stable symlink, never replays.
   client.outbox = {}
   if pipe and not pipe:is_closing() then
     pipe:close()
   end
   if message then
+    message = connection_error(message)
     finish_callbacks(message)
     Util.error(message)
   end
@@ -158,7 +194,7 @@ local function read(pipe, err, data)
     return
   end
   if not data then
-    disconnect(pipe, next(client.callbacks) and "Herdr socket connection closed" or nil)
+    disconnect(pipe, (remote() or next(client.callbacks)) and "Herdr socket connection closed" or nil)
     return
   end
   client.buffer = client.buffer .. data
@@ -194,9 +230,10 @@ end
 local function connect()
   local path = resolve_socket_path()
   if not path then
+    local message = connection_error("Could not resolve the Herdr socket path")
     client.outbox = {}
-    finish_callbacks("Could not resolve the Herdr socket path")
-    Util.error("Could not resolve the Herdr socket path")
+    finish_callbacks(message)
+    Util.error(message)
     return
   end
   local pipe = assert(vim.uv.new_pipe(false))
@@ -305,6 +342,7 @@ function M.sessions()
         herdr_focused = agent.focused == true,
         herdr_pane_id = agent.pane_id,
         herdr_pane_label = pane_label,
+        herdr_ssh = agent.ssh or pane.ssh,
         herdr_state_change_seq = tonumber(agent.state_change_seq) or 0,
         herdr_tab_id = agent.tab_id,
         herdr_tab_label = nonempty(tab.label) or agent.tab_id,
@@ -350,7 +388,7 @@ end
 
 function M:dump()
   local _, stdout = exec({
-    "herdr",
+    vim.env.HERDR_BIN_PATH or "herdr",
     "agent",
     "read",
     self.herdr_pane_id,
@@ -368,7 +406,7 @@ function M.focus(session)
     Util.warn("Session is not running in a Herdr pane")
     return false
   end
-  return exec({ "herdr", "agent", "focus", session.herdr_pane_id }) ~= nil
+  return exec({ vim.env.HERDR_BIN_PATH or "herdr", "agent", "focus", session.herdr_pane_id }) ~= nil
 end
 
 function M._reset()

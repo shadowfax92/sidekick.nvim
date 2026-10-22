@@ -9,6 +9,7 @@ describe("cli affinity", function()
   local env_keys = {
     "HERDR_ENV",
     "HERDR_PANE_ID",
+    "HERDR_SSH_PANES",
     "HERDR_TAB_ID",
     "HERDR_WORKSPACE_ID",
     "TMUX_PANE",
@@ -149,8 +150,16 @@ describe("cli affinity", function()
 
   it("does not treat sibling worktrees as the same project", function()
     local projects = {
-      ["/repo/.worktrees/task-a"] = { cwd = "/repo/.worktrees/task-a", worktree_root = "/repo/.worktrees/task-a", git_common_dir = "/repo/.git" },
-      ["/repo/.worktrees/task-b"] = { cwd = "/repo/.worktrees/task-b", worktree_root = "/repo/.worktrees/task-b", git_common_dir = "/repo/.git" },
+      ["/repo/.worktrees/task-a"] = {
+        cwd = "/repo/.worktrees/task-a",
+        worktree_root = "/repo/.worktrees/task-a",
+        git_common_dir = "/repo/.git",
+      },
+      ["/repo/.worktrees/task-b"] = {
+        cwd = "/repo/.worktrees/task-b",
+        worktree_root = "/repo/.worktrees/task-b",
+        git_common_dir = "/repo/.git",
+      },
     }
     Affinity.project = function(path)
       return projects[path]
@@ -200,6 +209,30 @@ describe("cli affinity", function()
       { text = "root", hl = "SidekickCliAffinityRoot" },
     }, affinity.badges)
   end)
+
+  for _, remote in ipairs({ false, true }) do
+    it("matches SSH project paths only from a remote editor: " .. tostring(remote), function()
+      vim.env.HERDR_SSH_PANES = remote and "1" or nil
+      local looked_up = false
+      Affinity.project = function(path)
+        looked_up = true
+        return { cwd = path, worktree_root = "/repo/app" }
+      end
+      local affinity = Affinity.score({
+        cwd = "/repo/app",
+        project = { cwd = "/repo/app", worktree_root = "/repo/app" },
+      }, {
+        backend = "herdr",
+        cwd = "/repo/app",
+        herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" },
+      })
+      assert.are.equal(remote, looked_up)
+      assert.are.equal(remote, affinity.exact_cwd)
+      assert.are.equal(remote, affinity.same_git_root)
+      assert.are.equal(remote, Affinity.in_scope(affinity, "project"))
+      assert.are.equal(remote, Affinity.in_scope(affinity, "cwd"))
+    end)
+  end
 
   it("uses the tmx scratch parent pane as the current tmux pane", function()
     Config.cli.mux.tmx_scratch = true

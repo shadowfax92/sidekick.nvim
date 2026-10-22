@@ -26,6 +26,7 @@ describe("cli state routing", function()
   local original_tools
   local original_status_setup
   local configured
+  local original_ssh_panes
 
   local function tool(name)
     return { name = name }
@@ -53,6 +54,8 @@ describe("cli state routing", function()
   end
 
   before_each(function()
+    original_ssh_panes = vim.env.HERDR_SSH_PANES
+    vim.env.HERDR_SSH_PANES = nil
     original_attach = Session.attach
     original_attached = Session.attached
     original_auto_attach = Config.cli.mux.auto_attach
@@ -105,6 +108,7 @@ describe("cli state routing", function()
   end)
 
   after_each(function()
+    vim.env.HERDR_SSH_PANES = original_ssh_panes
     Affinity.current_scope = original_current_scope
     Affinity.score = original_score
     Affinity.tmx_parent_pane = original_tmx_parent_pane
@@ -164,6 +168,43 @@ describe("cli state routing", function()
     assert.is_true(scoped_1._attached)
     assert.is_true(scoped_2._attached)
     assert.is_false(outside._attached)
+  end)
+
+  for _, scope in ipairs({ "cwd", "project", "all" }) do
+    it("keeps SSH agents manual in local nvim with " .. scope .. " scope", function()
+      local ssh = session("codex", "ssh")
+      ssh.backend = "herdr"
+      ssh.herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" }
+      Session.sessions = function()
+        return { ssh }
+      end
+      Affinity.score = function()
+        return { exact_cwd = true, same_git_root = true, score = 1500, badges = {} }
+      end
+      assert.are.same({}, State.auto_attach(nil, { scope = scope }))
+      assert.is_false(ssh._attached)
+      local states = State.get({ started = true })
+      assert.are.equal(1, #states)
+      State.attach(states[1])
+      assert.is_true(ssh._attached)
+    end)
+  end
+
+  it("keeps the remote scratch parent authoritative across projects", function()
+    vim.env.HERDR_SSH_PANES = "1"
+    local parent = session("codex", "parent")
+    parent.backend = "herdr"
+    parent.herdr_ssh = { host = "studio", link_id = "link-1", state = "live", local_cwd = "/laptop" }
+    Session.sessions = function()
+      return { parent }
+    end
+    Affinity.tmx_parent_pane = function()
+      return "%parent"
+    end
+    Affinity.score = function()
+      return { exact_cwd = false, same_git_root = false, same_tmux_pane = true, score = 25, badges = {} }
+    end
+    assert.are.equal(parent, State.auto_attach(nil, { scope = "project" })[1].session)
   end)
 
   for _, scope in ipairs({ "cwd", "project", "all" }) do

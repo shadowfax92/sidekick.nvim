@@ -19,6 +19,7 @@ M._attached = {} ---@type table<string,sidekick.cli.Session>
 ---@field mux_session? string
 ---@field mux_backend? string
 ---@field herdr_pane_id? string
+---@field herdr_ssh? {host:string, link_id:string, state:string, local_cwd:string} SSH location projected by the local Herdr server
 
 ---@alias sidekick.cli.session.Opts sidekick.cli.session.State|{cwd?:string,id?:string}
 
@@ -128,7 +129,8 @@ function M.setup()
     zellij = "sidekick.cli.session.zellij",
   }
   for name, mod in pairs(session_backends) do
-    if vim.fn.executable(name) == 1 then
+    local executable = name == "herdr" and (vim.env.HERDR_BIN_PATH or name) or name
+    if vim.fn.executable(executable) == 1 then
       M.register(name, require(mod))
     end
   end
