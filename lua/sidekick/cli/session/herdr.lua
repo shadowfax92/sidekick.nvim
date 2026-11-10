@@ -2,6 +2,7 @@ local Util = require("sidekick.util")
 
 ---@class sidekick.cli.muxer.Herdr: sidekick.cli.Session
 ---@field herdr_pane_id string
+---@field _timeout? integer per-request timeout override for tests, in ms
 local M = {}
 M.__index = M
 
@@ -9,19 +10,27 @@ local live = {} ---@type table<string, boolean>
 local context = {} ---@type table<string, string>
 local socket_path
 local request_id = 0
-local client
 
-local function new_client()
-  return {
-    buffer = "",
-    callbacks = {},
-    connected = false,
-    connecting = false,
-    outbox = {},
-  }
-end
+-- Bounds one request from connect to reply. Herdr answers a local request
+-- within its own 5s app timeout (APP_RESPONSE_TIMEOUT), so this only fires when
+-- nothing is answering, e.g. a forwarded socket whose SSH link went quiet.
+local REQUEST_TIMEOUT_MS = 6000
 
-client = new_client()
+---@class sidekick.herdr.Request
+---@field id string
+---@field payload string one newline-terminated JSON line
+---@field callback? fun(response?:table, error?:string)
+
+---@class sidekick.herdr.Connection
+---@field request sidekick.herdr.Request
+---@field pipe uv.uv_pipe_t
+---@field timer uv.uv_timer_t
+---@field buffer string
+
+---@type sidekick.herdr.Request[] requests not yet started, in call order
+local queue = {}
+---@type sidekick.herdr.Connection? the one request currently on the wire
+local active
 
 local function nonempty(value)
   return type(value) == "string" and value ~= "" and value or nil
@@ -141,125 +150,153 @@ local function decode_snapshot()
   return response.result and response.result.snapshot or nil
 end
 
-local function finish_callbacks(message)
-  local callbacks = client.callbacks
-  client.callbacks = {}
-  for _, callback in pairs(callbacks) do
+--[[
+Herdr socket transport.
+
+Herdr's API socket serves exactly one request per connection: the server reads
+one newline-terminated JSON line, writes one JSON reply line, and closes. Any
+further bytes on that connection are never read, and writing after the close
+fails with EPIPE. So every request gets its own connection:
+
+  M.request -> queue -> pump -> connect -> write line -> read reply line -> close
+                         ^                                                   |
+                         +---------- next queued request (scheduled) <-------+
+
+The server handles each connection on its own thread, so two open connections
+can be served in either order. Requests therefore run strictly one at a time:
+the next connection opens only after the previous one has its reply or has
+failed. Removing that serialization lets Enter overtake the text it submits.
+]]
+
+---@param callback? fun(response?:table, error?:string)
+local function deliver(callback, response, message)
+  if callback then
     vim.schedule(function()
-      callback(nil, message)
+      callback(response, message)
     end)
   end
 end
 
-local function disconnect(pipe, message)
-  if client.pipe ~= pipe then
-    return
+local pump
+
+---@param conn sidekick.herdr.Connection
+local function close_connection(conn)
+  if active == conn then
+    active = nil
   end
-  client.pipe = nil
-  client.buffer = ""
-  client.connected = false
-  client.connecting = false
-  -- A failed write/read may already have delivered input. Drop pending work;
-  -- only the next user action reconnects through the stable symlink, never replays.
-  client.outbox = {}
-  if pipe and not pipe:is_closing() then
-    pipe:close()
+  if not conn.timer:is_closing() then
+    conn.timer:close()
   end
-  if message then
-    message = connection_error(message)
-    finish_callbacks(message)
-    Util.error(message)
+  if not conn.pipe:is_closing() then
+    conn.pipe:close()
   end
 end
 
-local function handle_response(line)
+---@param conn sidekick.herdr.Connection
+---@param line string
+local function complete(conn, line)
+  close_connection(conn)
   local ok, response = pcall(vim.json.decode, line)
   if not ok or type(response) ~= "table" then
+    deliver(conn.request.callback, nil, "Herdr returned an invalid socket response")
     Util.error("Herdr returned an invalid socket response")
-    return
-  end
-  local callback = response.id and client.callbacks[response.id] or nil
-  if response.id then
-    client.callbacks[response.id] = nil
-  end
-  if callback then
-    callback(response)
+  elseif conn.request.callback then
+    deliver(conn.request.callback, response)
   elseif response.error then
     Util.error(("Herdr request failed: %s"):format(response.error.message or response.error.code or "unknown error"))
   end
+  -- The server answered, so it is reachable: an error reply for one pane must
+  -- not cost the other queued targets their input. Resolution runs Vimscript,
+  -- which is unsafe in this libuv callback, hence the schedule.
+  vim.schedule(pump)
 end
 
-local function read(pipe, err, data)
-  if client.pipe ~= pipe then
+-- A connection-level failure (no socket, refused, reset, closed without reply,
+-- timeout) fails the request on the wire and every request queued behind it,
+-- with a single notification. Queued requests are dropped rather than tried:
+-- they are usually the rest of one user action (Enter after its text, the
+-- other multicast targets), the transport just proved unreachable or stalled,
+-- and continuing would submit an Enter whose text may be missing or cost each
+-- queued request its own timeout. Nothing is ever replayed either: a failed
+-- write or read may already have delivered input to an agent, so only the next
+-- user action opens a new connection.
+---@param conn? sidekick.herdr.Connection
+---@param message string
+local function fail(conn, message)
+  local failed = {}
+  if conn then
+    close_connection(conn)
+    failed[1] = conn.request
+  end
+  vim.list_extend(failed, queue)
+  queue = {}
+  message = connection_error(message)
+  for _, request in ipairs(failed) do
+    deliver(request.callback, nil, message)
+  end
+  Util.error(message)
+end
+
+---@param conn sidekick.herdr.Connection
+local function read(conn, err, data)
+  if active ~= conn then
     return
   end
   if err then
-    disconnect(pipe, "Herdr socket read failed: " .. err)
-    return
+    return fail(conn, "Herdr socket read failed: " .. err)
   end
   if not data then
-    disconnect(pipe, (remote() or next(client.callbacks)) and "Herdr socket connection closed" or nil)
-    return
+    -- Herdr ends every reply with a newline; tolerate a final line without one.
+    if conn.buffer ~= "" then
+      return complete(conn, conn.buffer)
+    end
+    return fail(conn, "Herdr socket connection closed before a response")
   end
-  client.buffer = client.buffer .. data
-  while true do
-    local stop = client.buffer:find("\n", 1, true)
-    if not stop then
-      return
-    end
-    local line = client.buffer:sub(1, stop - 1)
-    client.buffer = client.buffer:sub(stop + 1)
-    if line ~= "" then
-      vim.schedule(function()
-        handle_response(line)
-      end)
-    end
+  conn.buffer = conn.buffer .. data
+  local stop = conn.buffer:find("\n", 1, true)
+  if stop then
+    complete(conn, conn.buffer:sub(1, stop - 1))
   end
 end
 
-local function flush()
-  local pipe = client.pipe
-  if not pipe or not client.connected or #client.outbox == 0 then
+-- Starts the next queued request unless one is already on the wire. Always
+-- runs on the main loop: socket path resolution may shell out to `herdr`.
+function pump()
+  if active or #queue == 0 then
     return
   end
-  local payload = table.concat(client.outbox)
-  client.outbox = {}
-  pipe:write(payload, function(err)
-    if err then
-      disconnect(pipe, "Herdr socket write failed: " .. err)
-    end
-  end)
-end
-
-local function connect()
   local path = resolve_socket_path()
   if not path then
-    local message = connection_error("Could not resolve the Herdr socket path")
-    client.outbox = {}
-    finish_callbacks(message)
-    Util.error(message)
-    return
+    return fail(nil, "Could not resolve the Herdr socket path")
   end
-  local pipe = assert(vim.uv.new_pipe(false))
-  client.pipe = pipe
-  client.connecting = true
-  pipe:connect(path, function(err)
-    if client.pipe ~= pipe then
-      if not pipe:is_closing() then
-        pipe:close()
-      end
+  local request = table.remove(queue, 1)
+  local conn = {
+    request = request,
+    pipe = assert(vim.uv.new_pipe(false)),
+    timer = assert(vim.uv.new_timer()),
+    buffer = "",
+  }
+  active = conn
+  conn.timer:start(M._timeout or REQUEST_TIMEOUT_MS, 0, function()
+    if active == conn then
+      fail(conn, "Herdr request timed out")
+    end
+  end)
+  conn.pipe:connect(path, function(err)
+    if active ~= conn then
       return
     end
     if err then
-      disconnect(pipe, "Could not connect to Herdr: " .. err)
-      return
+      return fail(conn, "Could not connect to Herdr: " .. err)
     end
-    client.connected = true
-    client.connecting = false
-    pipe:read_start(function(read_err, data)
-      read(pipe, read_err, data)
+    conn.pipe:read_start(function(read_err, data)
+      read(conn, read_err, data)
     end)
-    flush()
+    conn.pipe:write(request.payload, function(write_err)
+      if write_err and active == conn then
+        fail(conn, "Herdr socket write failed: " .. write_err)
+      end
+    end)
   end)
 end
 
@@ -274,15 +311,8 @@ function M.request(method, params, callback)
     Util.error("Failed to encode Herdr request")
     return
   end
-  if callback then
-    client.callbacks[id] = callback
-  end
-  client.outbox[#client.outbox + 1] = payload .. "\n"
-  if client.connected then
-    flush()
-  elseif not client.connecting then
-    connect()
-  end
+  queue[#queue + 1] = { id = id, payload = payload .. "\n", callback = callback }
+  pump()
   return id
 end
 
@@ -414,11 +444,11 @@ function M.focus(session)
 end
 
 function M._reset()
-  local pipe = client.pipe
-  if pipe and not pipe:is_closing() then
-    pipe:close()
+  if active then
+    close_connection(active)
   end
-  client = new_client()
+  queue = {}
+  M._timeout = nil
   context = {}
   live = {}
   request_id = 0

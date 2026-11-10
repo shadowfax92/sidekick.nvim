@@ -98,6 +98,7 @@ describe("herdr sessions", function()
 
   -- The fake transport never reaches a real server. Tests control each async
   -- handoff so a failed, possibly delivered send can be distinguished from new input.
+  -- Like Herdr, each pipe carries a single request; a second write is a bug.
   local function fake_pipes()
     vim.uv.new_pipe = function()
       local pipe = { writes = {}, closed = false }
@@ -108,6 +109,7 @@ describe("herdr sessions", function()
         self.on_read = cb
       end
       function pipe:write(payload, cb)
+        assert(#self.writes == 0, "Herdr serves one request per connection")
         self.writes[#self.writes + 1] = payload
         self.on_write = cb
       end
@@ -440,6 +442,288 @@ describe("herdr sessions", function()
 
     assert.is_true(Herdr.focus({ herdr_pane_id = "w2:p9" }))
     assert.are.same({ "herdr", "agent", "focus", "w2:p9" }, command)
+  end)
+end)
+
+-- These tests use the real libuv client against an in-process server that
+-- speaks Herdr's actual protocol: one request line per connection, one reply
+-- line, then close. A fake pipe that accepts unlimited writes hid the bug where
+-- every request after the first on a shared connection was silently lost.
+describe("herdr socket transport", function()
+  local env_keys = { "HERDR_BIN_PATH", "HERDR_SOCKET_PATH", "HERDR_SSH_PANES" }
+  local original_env = {}
+  local original_error
+  local original_exec
+  local errors
+  local server
+
+  ---@param opts? {mode?: "reply"|"close"|"silent", reply?: fun(request:table, index:integer):table}
+  local function start_server(opts)
+    opts = opts or {}
+    local path = vim.fn.tempname() .. ".sock"
+    local listener = assert(vim.uv.new_pipe(false))
+    assert(listener:bind(path))
+    local srv = { path = path, listener = listener, connections = 0, received = {}, clients = {} }
+    assert(listener:listen(16, function(err)
+      assert(not err, err)
+      local conn = assert(vim.uv.new_pipe(false))
+      listener:accept(conn)
+      srv.connections = srv.connections + 1
+      local index = srv.connections
+      srv.clients[#srv.clients + 1] = conn
+      local buffer = ""
+      conn:read_start(function(read_err, data)
+        if read_err or not data then
+          if not conn:is_closing() then
+            conn:close()
+          end
+          return
+        end
+        if buffer:find("\n", 1, true) then
+          return -- like Herdr: anything after the first line is never read
+        end
+        buffer = buffer .. data
+        local stop = buffer:find("\n", 1, true)
+        if not stop then
+          return
+        end
+        local request = vim.json.decode(buffer:sub(1, stop - 1))
+        srv.received[#srv.received + 1] = { connection = index, request = request }
+        if opts.mode == "silent" then
+          return
+        end
+        conn:read_stop()
+        if opts.mode == "close" then
+          conn:close()
+          return
+        end
+        local reply = opts.reply and opts.reply(request, #srv.received)
+          or { id = request.id, result = { echo = request.params } }
+        reply = vim.json.encode(reply) .. "\n"
+        conn:write(reply, function()
+          if not conn:is_closing() then
+            conn:close()
+          end
+        end)
+      end)
+    end))
+    return srv
+  end
+
+  local function stop_server()
+    if not server then
+      return
+    end
+    for _, conn in ipairs(server.clients) do
+      if not conn:is_closing() then
+        conn:close()
+      end
+    end
+    if not server.listener:is_closing() then
+      server.listener:close()
+    end
+    vim.fn.delete(server.path)
+    server = nil
+  end
+
+  before_each(function()
+    for _, key in ipairs(env_keys) do
+      original_env[key] = vim.env[key]
+      vim.env[key] = nil
+    end
+    original_error = Util.error
+    original_exec = Util.exec
+    errors = {}
+    Util.error = function(message)
+      errors[#errors + 1] = message
+    end
+    Herdr._reset()
+  end)
+
+  after_each(function()
+    Herdr._reset()
+    stop_server()
+    Util.error = original_error
+    Util.exec = original_exec
+    for _, key in ipairs(env_keys) do
+      vim.env[key] = original_env[key]
+    end
+  end)
+
+  local function use_local_server(srv)
+    Util.exec = function(cmd)
+      assert.are.same({ "herdr", "status", "server" }, cmd)
+      return { "socket: " .. srv.path }, "socket: " .. srv.path
+    end
+  end
+
+  it("delivers back-to-back multicast sends each on its own connection, in order", function()
+    server = start_server()
+    use_local_server(server)
+    local responses = {}
+    for i, pane in ipairs({ "w1:p1", "w2:p2", "w3:p3" }) do
+      Herdr.request("pane.send_input", { pane_id = pane, text = "ctx" }, function(response, err)
+        responses[i] = response or err
+      end)
+    end
+
+    assert.is_true(vim.wait(3000, function()
+      return #vim.tbl_keys(responses) == 3
+    end))
+    assert.are.same(
+      { 1, 2, 3 },
+      vim.tbl_map(function(r)
+        return r.connection
+      end, server.received)
+    )
+    assert.are.same(
+      { "w1:p1", "w2:p2", "w3:p3" },
+      vim.tbl_map(function(r)
+        return r.request.params.pane_id
+      end, server.received)
+    )
+    for i, pane in ipairs({ "w1:p1", "w2:p2", "w3:p3" }) do
+      assert.are.equal("sidekick:" .. i, responses[i].id)
+      assert.are.equal(pane, responses[i].result.echo.pane_id)
+    end
+    assert.are.same({}, errors)
+  end)
+
+  it("delivers text then Enter to one pane in order via send and submit", function()
+    server = start_server()
+    use_local_server(server)
+    local session = setmetatable({ herdr_pane_id = "w2:p9" }, Herdr)
+    session:send("context\n")
+    session:submit()
+    session = setmetatable({ herdr_pane_id = "w3:p1" }, Herdr)
+    session:send("other\n")
+    session:submit()
+
+    assert.is_true(vim.wait(3000, function()
+      return #server.received == 4
+    end))
+    -- Callers without a callback must not leave a later request stuck.
+    assert.are.same({
+      {
+        connection = 1,
+        request = { id = "sidekick:1", method = "pane.send_input", params = { pane_id = "w2:p9", text = "context\n" } },
+      },
+      {
+        connection = 2,
+        request = { id = "sidekick:2", method = "pane.send_input", params = { pane_id = "w2:p9", keys = { "enter" } } },
+      },
+      {
+        connection = 3,
+        request = { id = "sidekick:3", method = "pane.send_input", params = { pane_id = "w3:p1", text = "other\n" } },
+      },
+      {
+        connection = 4,
+        request = { id = "sidekick:4", method = "pane.send_input", params = { pane_id = "w3:p1", keys = { "enter" } } },
+      },
+    }, server.received)
+    vim.wait(50)
+    assert.are.same({}, errors)
+  end)
+
+  it("never opens the next connection before the previous one is answered", function()
+    server = start_server({ mode = "silent" })
+    use_local_server(server)
+    Herdr._timeout = 300
+    Herdr.request("pane.send_input", { pane_id = "w1:p1", text = "a" })
+    Herdr.request("pane.send_input", { pane_id = "w2:p2", text = "b" })
+    assert.is_true(vim.wait(1000, function()
+      return #server.received == 1
+    end))
+    vim.wait(100)
+    assert.are.equal(1, server.connections)
+  end)
+
+  it("fails every queued request with one error when the server is not listening", function()
+    vim.env.HERDR_SSH_PANES = "1"
+    vim.env.HERDR_SOCKET_PATH = vim.fn.tempname() .. ".sock"
+    Util.exec = function()
+      error("remote requests must not discover a server")
+    end
+    local failures = {}
+    for i = 1, 3 do
+      Herdr.request("ping", {}, function(response, err)
+        failures[i] = { response = response, err = err }
+      end)
+    end
+    assert.is_true(vim.wait(1000, function()
+      return #vim.tbl_keys(failures) == 3
+    end))
+    for i = 1, 3 do
+      assert.is_nil(failures[i].response)
+      assert.are.equal("Herdr (laptop) unreachable: SSH link down", failures[i].err)
+    end
+    assert.are.same({ "Herdr (laptop) unreachable: SSH link down" }, errors)
+  end)
+
+  it("reports a server that closes without answering and drops the queue without replay", function()
+    server = start_server({ mode = "close" })
+    use_local_server(server)
+    local failed
+    Herdr.request("pane.send_input", { pane_id = "w1:p1", text = "a" }, function(_, err)
+      failed = err
+    end)
+    Herdr.request("pane.send_input", { pane_id = "w1:p1", keys = { "enter" } })
+    assert.is_true(vim.wait(1000, function()
+      return failed ~= nil
+    end))
+    vim.wait(100)
+    assert.are.equal("Herdr socket connection closed before a response", failed)
+    assert.are.same({ failed }, errors)
+    -- Enter must not follow text that may not have arrived, and the dropped text is never re-sent.
+    assert.are.equal(1, #server.received)
+
+    Herdr.request("pane.send_input", { pane_id = "w1:p1", text = "new" })
+    assert.is_true(vim.wait(1000, function()
+      return #server.received == 2
+    end))
+    assert.are.equal("new", server.received[2].request.params.text)
+  end)
+
+  it("times out a connection that never answers and frees the queue", function()
+    server = start_server({ mode = "silent" })
+    use_local_server(server)
+    Herdr._timeout = 200
+    local results = {}
+    Herdr.request("pane.send_input", { pane_id = "w1:p1", text = "a" }, function(_, err)
+      results[1] = err
+    end)
+    Herdr.request("pane.send_input", { pane_id = "w2:p2", text = "b" }, function(_, err)
+      results[2] = err
+    end)
+    assert.is_true(vim.wait(2000, function()
+      return results[1] ~= nil and results[2] ~= nil
+    end))
+    assert.are.equal("Herdr request timed out", results[1])
+    assert.are.equal(results[1], results[2])
+    assert.are.same({ results[1] }, errors)
+    assert.are.equal(1, #server.received)
+  end)
+
+  it("reports an error response without a callback and keeps serving the queue", function()
+    server = start_server({
+      reply = function(request, index)
+        if index == 1 then
+          return { id = request.id, error = { code = "pane_not_found", message = "pane not found" } }
+        end
+        return { id = request.id, result = {} }
+      end,
+    })
+    use_local_server(server)
+    local second
+    Herdr.request("pane.send_input", { pane_id = "w9:p9", text = "a" })
+    Herdr.request("pane.send_input", { pane_id = "w2:p2", text = "b" }, function(response)
+      second = response
+    end)
+    assert.is_true(vim.wait(2000, function()
+      return second ~= nil
+    end))
+    assert.are.same({}, second.result)
+    assert.are.same({ "Herdr request failed: pane not found" }, errors)
   end)
 end)
 
