@@ -6,6 +6,12 @@ local Util = require("sidekick.util")
 
 local M = {}
 
+-- Session ids that auto_attach attached without the user choosing them. A scratch
+-- parent replaces only these: an on-demand fallback that predates the parent is
+-- stale, but an agent picked with `cli.select()` is a deliberate extra target and
+-- must survive every later send and HerdrScratchContext refresh.
+local auto_attached = {} ---@type table<string, boolean>
+
 ---@class sidekick.cli.State
 ---@field tool sidekick.cli.Tool
 ---@field attached? boolean
@@ -281,8 +287,9 @@ function M.auto_attach(filter, opts)
     -- An on-demand fallback may predate the parent agent. Once the parent is
     -- available it owns this scratch, so retaining that fallback would multicast
     -- future input to an unrelated pane (or win single-target scope selection).
+    -- Agents the user picked are not fallbacks and stay attached.
     for _, session in pairs(Session.attached()) do
-      if session.id ~= parent[1].session.id then
+      if session.id ~= parent[1].session.id and auto_attached[session.id] then
         M.detach(M.get_state(session))
       end
     end
@@ -291,7 +298,7 @@ function M.auto_attach(filter, opts)
   local attached = {} ---@type sidekick.cli.State[]
   local newly_attached = {} ---@type sidekick.cli.State[]
   for _, state in ipairs(states) do
-    local ret, did_attach = M.attach(state, { show = opts.show, focus = opts.focus, notify = false })
+    local ret, did_attach = M.attach(state, { auto = true, show = opts.show, focus = opts.focus, notify = false })
     attached[#attached + 1] = ret
     if did_attach then
       newly_attached[#newly_attached + 1] = ret
@@ -361,7 +368,10 @@ function M.with(cb, opts)
   if opts.attach and auto_attach_enabled("on_demand") and Affinity.tmx_parent_pane() then
     local parent = M.auto_attach(opts.filter, { focus = opts.focus, show = opts.show })
     if #parent == 1 then
-      apply(parent)
+      -- auto_attach just dropped stale fallbacks, so whatever else is still
+      -- attached was picked by the user: multicast reaches it alongside the
+      -- parent, while a single-target send stays with the parent.
+      apply(opts.multicast and dedupe(vim.list_extend(parent, M.get(filter_attached))) or parent)
       return
     end
   end
@@ -420,8 +430,11 @@ function M.with(cb, opts)
   end
 end
 
+--- `auto` marks a new attachment as auto_attach's own, which a scratch parent may
+--- later replace. `manual` records an explicit pick, which nothing auto-detaches,
+--- even when auto_attach attached that session first.
 ---@param state sidekick.cli.State
----@param opts? {show?:boolean, focus?:boolean, notify?:boolean}
+---@param opts? {show?:boolean, focus?:boolean, notify?:boolean, auto?:boolean, manual?:boolean}
 ---@return sidekick.cli.State state, boolean attached whether we just attached
 function M.attach(state, opts)
   opts = opts or {}
@@ -431,6 +444,11 @@ function M.attach(state, opts)
   -- if the session is already attached, the below is a no-op
   local session = state.session or Session.new({ tool = tool.name })
   session = Session.attach(session)
+  if opts.manual then
+    auto_attached[session.id] = nil
+  elseif attached then
+    auto_attached[session.id] = opts.auto or nil
+  end
 
   state = M.get_state(session) -- update state
   local terminal = state.terminal
@@ -449,6 +467,9 @@ end
 
 ---@param state sidekick.cli.State
 function M.detach(state)
+  if state.session then
+    auto_attached[state.session.id] = nil
+  end
   if state.session and state.attached then
     if state.terminal then
       state.terminal:close()

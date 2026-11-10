@@ -212,7 +212,8 @@ function M.select(opts)
   opts.cb = opts.cb
     or function(state)
       if state then
-        State.attach(state, { show = true, focus = opts.focus })
+        -- `manual`: an explicit pick must survive scratch-parent auto-attach.
+        State.attach(state, { show = true, focus = opts.focus, manual = true })
       end
     end
   require("sidekick.cli.ui.select").select(opts)
