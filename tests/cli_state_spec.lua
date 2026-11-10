@@ -367,14 +367,14 @@ describe("cli state routing", function()
       function()
         local other = session("claude", "other")
         local parent = session("codex", "parent")
-        other._attached = true
+        local running = { other }
         Session.sessions = function()
-          return { other, parent }
+          return running
         end
         Session.attached = function()
           return vim.tbl_filter(function(s)
             return s._attached
-          end, { other, parent })
+          end, running)
         end
         Affinity.tmx_parent_pane = function()
           return "%parent"
@@ -382,6 +382,11 @@ describe("cli state routing", function()
         Affinity.score = function(_, s)
           return { exact_cwd = s == other, same_git_root = s == other, same_tmux_pane = s == parent, score = 0 }
         end
+        -- Before the parent's agent runs, on-demand routing falls back to the project.
+        State.with(function() end, { attach = true, multicast = multicast, scope = "project" })
+        assert.is_true(other._attached)
+
+        running = { other, parent }
         local used = {}
         State.with(function(state)
           used[#used + 1] = state.session.id
@@ -393,6 +398,84 @@ describe("cli state routing", function()
       end
     )
   end
+
+  describe("a picked agent in a scratch", function()
+    local parent, picked, running
+
+    before_each(function()
+      parent = session("codex", "parent")
+      picked = session("claude", "picked")
+      running = { parent, picked }
+      Session.sessions = function()
+        return running
+      end
+      Session.attached = function()
+        return vim.tbl_filter(function(s)
+          return s._attached
+        end, running)
+      end
+      Affinity.tmx_parent_pane = function()
+        return "%parent"
+      end
+      Affinity.score = function(_, s)
+        -- The picked agent lives in another project, so no scope would auto-attach it.
+        return { exact_cwd = false, same_git_root = false, same_tmux_pane = s == parent, score = 0 }
+      end
+      require("sidekick.cli.ui.select").select = function(opts)
+        opts.cb(vim.tbl_filter(function(state)
+          return state.session == picked
+        end, State.get({ started = true }))[1])
+      end
+    end)
+
+    after_each(function()
+      require("sidekick.cli.ui.select").select = original_select
+    end)
+
+    local function route(multicast)
+      local used = {}
+      State.with(function(state)
+        used[#used + 1] = state.session.id
+      end, { attach = true, multicast = multicast, scope = "project" })
+      table.sort(used)
+      return used
+    end
+
+    it("stays attached and receives multicast alongside the parent", function()
+      State.auto_attach(nil, { scope = "project" })
+      require("sidekick.cli").select()
+      assert.is_true(picked._attached)
+
+      assert.are.same({ "parent", "picked" }, route(true))
+      assert.is_true(picked._attached)
+      -- Single-target routing keeps the parent authoritative, without detaching the pick.
+      assert.are.same({ "parent" }, route(false))
+      assert.is_true(picked._attached)
+    end)
+
+    it("survives the HerdrScratchContext refresh", function()
+      State.auto_attach(nil, { scope = "project" })
+      require("sidekick.cli").select()
+      -- What the popup-show refresh runs.
+      State.auto_attach(nil, { focus = false, multiple = true, show = true })
+      assert.is_true(parent._attached)
+      assert.is_true(picked._attached)
+    end)
+
+    it("survives when the pick was first an on-demand fallback", function()
+      running = { picked }
+      Affinity.score = function(_, s)
+        return { exact_cwd = s == picked, same_git_root = s == picked, same_tmux_pane = s == parent, score = 0 }
+      end
+      route(true)
+      assert.is_true(picked._attached)
+      require("sidekick.cli").select()
+
+      running = { parent, picked }
+      assert.are.same({ "parent", "picked" }, route(true))
+      assert.is_true(picked._attached)
+    end)
+  end)
 
   for _, mode in ipairs({ "outside scratch", "startup disabled", "mux disabled" }) do
     it("ignores HerdrScratchContext with " .. mode, function()
