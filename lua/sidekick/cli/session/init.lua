@@ -20,6 +20,9 @@ M._attached = {} ---@type table<string,sidekick.cli.Session>
 ---@field mux_backend? string
 ---@field herdr_pane_id? string
 ---@field herdr_ssh? {host:string, link_id:string, state:string, local_cwd:string} SSH location projected by the local Herdr server
+---@field hc_address? string
+---@field hc_space? string
+---@field hc_tab? string
 
 ---@alias sidekick.cli.session.Opts sidekick.cli.session.State|{cwd?:string,id?:string}
 
@@ -133,6 +136,11 @@ function M.setup()
     if vim.fn.executable(executable) == 1 then
       M.register(name, require(mod))
     end
+  end
+  -- Only register hc when a socket env var is present so discovery never starts a core.
+  local Hc = require("sidekick.cli.session.hc")
+  if Hc.socket_path() then
+    M.register("hc", Hc)
   end
   M.register("terminal", require("sidekick.cli.terminal"))
 end

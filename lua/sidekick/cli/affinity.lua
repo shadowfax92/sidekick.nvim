@@ -20,6 +20,9 @@ local project_cache = {} ---@type table<string, sidekick.cli.Project>
 ---@field herdr_workspace_id? string
 ---@field herdr_tab_id? string
 ---@field herdr_pane_id? string
+---@field hc_address? string
+---@field hc_space? string
+---@field hc_tab? string
 
 ---@class sidekick.cli.AffinityBadge
 ---@field text string
@@ -153,9 +156,13 @@ function M.current_scope()
   local parent_pane = M.tmx_parent_pane()
   local pane = M.current_tmux()
   local herdr = require("sidekick.cli.session.herdr").current()
+  local hc = require("sidekick.cli.session.hc").context(parent_pane)
   return {
     cwd = Session.cwd(),
     project = M.project(Session.cwd()),
+    hc_address = parent_pane,
+    hc_space = hc.space,
+    hc_tab = hc.tab,
     herdr_workspace_id = herdr.workspace_id,
     herdr_tab_id = herdr.tab_id,
     herdr_pane_id = herdr.pane_id,
@@ -185,12 +192,15 @@ end
 function M.score(scope, session)
   local foreign = M.is_foreign(session)
   local session_project = not foreign and M.project(session.cwd) or nil
-  local herdr = (session.mux_backend or session.backend) == "herdr"
+  local backend = session.mux_backend or session.backend
   local same_session
   local same_pane
-  if herdr then
+  if backend == "herdr" then
     same_session = scope.herdr_workspace_id ~= nil and scope.herdr_workspace_id == session.herdr_workspace_id
     same_pane = scope.herdr_pane_id ~= nil and scope.herdr_pane_id == session.herdr_pane_id
+  elseif backend == "hc" then
+    same_session = scope.hc_space ~= nil and scope.hc_space == session.hc_space
+    same_pane = scope.hc_address ~= nil and scope.hc_address == session.hc_address
   else
     same_session = scope.tmux_session ~= nil and scope.tmux_session == session.mux_session
     same_pane = scope.tmux_pane_id ~= nil and scope.tmux_pane_id == session.tmux_pane_id
@@ -212,8 +222,10 @@ function M.score(scope, session)
   end
 
   if affinity.same_tmux_session then
-    if herdr then
+    if backend == "herdr" then
       affinity.same_tmux_window = scope.herdr_tab_id ~= nil and scope.herdr_tab_id == session.herdr_tab_id
+    elseif backend == "hc" then
+      affinity.same_tmux_window = scope.hc_tab ~= nil and scope.hc_tab == session.hc_tab
     elseif scope.tmux_window_index ~= nil then
       affinity.same_tmux_window = tostring(scope.tmux_window_index) == tostring(session.tmux_window_index)
     end
