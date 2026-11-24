@@ -7,6 +7,34 @@ M.__index = M
 M.priority = 20
 M.external = true
 
+---@param pid number
+---@param proc { name?: string, ppid?: number }
+---@return boolean
+local function is_background_server(pid, proc)
+  if proc.ppid and proc.ppid > 0 then
+    local parent = vim.api.nvim_get_proc(proc.ppid)
+    if parent and parent.name == "opencode" then
+      return true
+    end
+  end
+  local Util = require("sidekick.util")
+  local lines = Util.exec({ "ps", "-ww", "-o", "args=", "-p", tostring(pid) }, { notify = false })
+  local cmd = lines and lines[1] or ""
+  local rest = cmd:match("^%s*%S+%s+(.*)$")
+  if not rest then
+    return false
+  end
+  for token in rest:gmatch("%S+") do
+    if token == "serve" then
+      return true
+    end
+    if token:sub(1, 1) ~= "-" then
+      break
+    end
+  end
+  return false
+end
+
 function M.sessions()
   local Procs = require("sidekick.cli.procs")
   local Util = require("sidekick.util")
@@ -36,7 +64,7 @@ function M.sessions()
 
   for pid, port in pairs(ports) do
     local proc = vim.api.nvim_get_proc(pid)
-    if proc and proc.name == "opencode" then
+    if proc and proc.name == "opencode" and not is_background_server(pid, proc) then
       ret[#ret + 1] = {
         id = "opencode-" .. pid,
         pid = pid,
