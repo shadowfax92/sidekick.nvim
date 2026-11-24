@@ -21,8 +21,6 @@ M._attached = {} ---@type table<string,sidekick.cli.Session>
 ---@field herdr_pane_id? string
 ---@field herdr_ssh? {host:string, link_id:string, state:string, local_cwd:string} SSH location projected by the local Herdr server
 ---@field hc_address? string
----@field hc_cols? integer
----@field hc_rows? integer
 ---@field hc_space? string
 ---@field hc_tab? string
 

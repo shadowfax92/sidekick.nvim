@@ -3,10 +3,9 @@ local Util = require("sidekick.util")
 
 ---@class sidekick.cli.muxer.Hc: sidekick.cli.Session
 ---@field hc_address string
----@field hc_cols? integer
----@field hc_rows? integer
 ---@field hc_space? string
 ---@field hc_tab? string
+---@field _list_timeout? integer list timeout override for tests, in ms
 ---@field _timeout? integer per-request timeout override for tests, in ms
 local M = {}
 M.__index = M
@@ -15,9 +14,9 @@ local FRAME_HEADER = 9
 local FRAME_MAX_PAYLOAD = 16 * 1024 * 1024
 local FRAME_DATA = 0
 local FRAME_CLOSE = 2
-local DEFAULT_COLS = 200
-local DEFAULT_ROWS = 120
-local DUMP_LINES = 1000
+local HELLO_ID = 1
+local ATTACH_ID = 2
+local LIST_TIMEOUT_MS = 1000
 local REQUEST_TIMEOUT_MS = 6000
 
 local APP_TOOL = {
@@ -32,23 +31,25 @@ local SCRATCH_KIND = {
   shell = "shell",
 }
 
+---@class sidekick.hc.Stream
+---@field pipe uv.uv_pipe_t
+---@field timer uv.uv_timer_t
+---@field close fun(self:sidekick.hc.Stream)
+---@field write fun(self:sidekick.hc.Stream, data:string)
+
 ---@class sidekick.hc.SendRequest
 ---@field address string
----@field cols integer
----@field rows integer
 ---@field data string
 ---@field callback? fun(ok:boolean, error?:string)
 
 ---@class sidekick.hc.Connection
 ---@field request sidekick.hc.SendRequest
----@field pipe uv.uv_pipe_t
----@field timer uv.uv_timer_t
+---@field stream? sidekick.hc.Stream
 ---@field buffer string
 ---@field phase "hello"|"attach"|"closing"
 ---@field channel? integer
 
 local live = {} ---@type table<string, boolean>
-local sizes = {} ---@type table<string, { cols: integer, rows: integer }>
 local context = {} ---@type table<string, { space?: string, tab?: string }>
 local queue = {} ---@type sidekick.hc.SendRequest[]
 local active ---@type sidekick.hc.Connection?
@@ -128,46 +129,58 @@ function M.map_tool(app)
   return APP_TOOL[app] or app
 end
 
+---@return { name: string, tool: sidekick.cli.Tool }[]
+local function ordered_tools()
+  local tools = Config.tools()
+  local names = vim.tbl_keys(tools)
+  table.sort(names)
+  local ret = {} ---@type { name: string, tool: sidekick.cli.Tool }[]
+  for _, name in ipairs(names) do
+    ret[#ret + 1] = { name = name, tool = tools[name] }
+  end
+  return ret
+end
+
+--- Match tool patterns against the foreground program name only (`basename(argv[1])`),
+--- never arguments, so editing e.g. `vim notes/gemini.md` does not match `gemini`.
 ---@param fg any
 ---@param pid any
+---@param tools { name: string, tool: sidekick.cli.Tool }[]
 ---@return string?
-local function match_foreground_tool(fg, pid)
-  if type(fg) ~= "table" or type(fg.argv) ~= "table" or #fg.argv == 0 then
+local function match_foreground_tool(fg, pid, tools)
+  if type(fg) ~= "table" or type(fg.argv) ~= "table" then
     return nil
   end
-  local argv = {} ---@type string[]
-  for _, arg in ipairs(fg.argv) do
-    if type(arg) == "string" then
-      argv[#argv + 1] = arg
-    end
+  local first = nonempty(fg.argv[1])
+  if not first then
+    return nil
   end
-  if #argv == 0 then
+  local prog = vim.fs.basename(first)
+  if not prog or prog == "" then
     return nil
   end
   local proc = {
     pid = type(fg.pid) == "number" and fg.pid or 0,
     ppid = type(pid) == "number" and pid or 0,
-    cmd = table.concat(argv, " "),
+    cmd = prog,
     cwd = nonempty(fg.cwd),
   }
-  local tools = Config.tools()
-  local names = vim.tbl_keys(tools)
-  table.sort(names)
-  for _, name in ipairs(names) do
-    if tools[name]:is_proc(proc) then
-      return name
+  for _, entry in ipairs(tools) do
+    if entry.tool:is_proc(proc) then
+      return entry.name
     end
   end
 end
 
 ---@param terminal table
+---@param get_tools fun(): { name: string, tool: sidekick.cli.Tool }[]
 ---@return string?
-local function resolve_tool(terminal)
+local function resolve_tool(terminal, get_tools)
   local status = type(terminal.status) == "table" and terminal.status or nil
   if status then
-    return M.map_tool(status.app) or match_foreground_tool(terminal.foreground, terminal.pid)
+    return M.map_tool(status.app) or match_foreground_tool(terminal.foreground, terminal.pid, get_tools())
   end
-  return match_foreground_tool(terminal.foreground, terminal.pid)
+  return match_foreground_tool(terminal.foreground, terminal.pid, get_tools())
 end
 
 --- Wrap text in bracketed paste markers, stripping any embedded end marker so pasted
@@ -178,6 +191,83 @@ local function bracketed_paste(text)
   return "\27[200~" .. text:gsub("\27%[201~", "") .. "\27[201~"
 end
 
+--- Shared Unix-socket connect, timeout, read, and close wrapper for `M.list` and sends.
+---@param path string
+---@param opts { timeout: integer, initial: string, on_data: fun(stream:sidekick.hc.Stream, data:string), on_eof: fun(stream:sidekick.hc.Stream), on_error: fun(stream:sidekick.hc.Stream, err:string) }
+---@return sidekick.hc.Stream
+local function open_stream(path, opts)
+  local pipe = assert(vim.uv.new_pipe(false))
+  local timer = assert(vim.uv.new_timer())
+  local closed = false
+
+  local stream = { pipe = pipe, timer = timer } ---@type sidekick.hc.Stream
+
+  function stream:close()
+    if closed then
+      return
+    end
+    closed = true
+    if not timer:is_closing() then
+      timer:close()
+    end
+    if not pipe:is_closing() then
+      pipe:close()
+    end
+  end
+
+  local function fail_stream(msg)
+    if closed then
+      return
+    end
+    stream:close()
+    opts.on_error(stream, msg)
+  end
+
+  function stream:write(data)
+    if closed then
+      return
+    end
+    pipe:write(data, function(write_err)
+      if write_err then
+        fail_stream("hc socket write failed: " .. write_err)
+      end
+    end)
+  end
+
+  timer:start(opts.timeout, 0, function()
+    fail_stream("hc request timed out")
+  end)
+
+  local ok_conn, conn_err = pipe:connect(path, function(err)
+    if closed then
+      return
+    end
+    if err then
+      return fail_stream("Could not connect to hc: " .. err)
+    end
+    pipe:read_start(function(read_err, data)
+      if closed then
+        return
+      end
+      if read_err then
+        return fail_stream("hc socket read failed: " .. read_err)
+      end
+      if not data then
+        stream:close()
+        opts.on_eof(stream)
+        return
+      end
+      opts.on_data(stream, data)
+    end)
+    stream:write(opts.initial)
+  end)
+  if ok_conn == nil then
+    fail_stream("Could not connect to hc: " .. tostring(conn_err))
+  end
+
+  return stream
+end
+
 --- Query `terminal.list` directly over the herdr-core socket so discovery never spawns
 --- `hc` (which would autostart a core if none is listening).
 ---@return table[]?
@@ -186,7 +276,6 @@ function M.list()
   if not path then
     return nil
   end
-  local pipe = assert(vim.uv.new_pipe(false))
   local done = false
   local terminals ---@type table[]?
   local buffer = ""
@@ -197,9 +286,6 @@ function M.list()
     end
     done = true
     terminals = result
-    if not pipe:is_closing() then
-      pipe:close()
-    end
   end
 
   local function handle_line(line)
@@ -216,50 +302,34 @@ function M.list()
     end
   end
 
-  local ok_conn = pipe:connect(path, function(err)
-    if done then
-      return
-    end
-    if err then
-      return finish(nil)
-    end
-    pipe:read_start(function(read_err, data)
-      if done then
-        return
-      end
-      if read_err then
-        return finish(nil)
-      end
-      if not data then
-        if buffer ~= "" then
-          handle_line(buffer)
-        else
-          finish(nil)
-        end
-        return
-      end
+  local timeout = M._list_timeout or M._timeout or LIST_TIMEOUT_MS
+  local stream = open_stream(path, {
+    timeout = timeout,
+    initial = '{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{}}\n',
+    on_data = function(s, data)
       buffer = buffer .. data
       local stop = buffer:find("\n", 1, true)
       if stop then
+        s:close()
         handle_line(buffer:sub(1, stop - 1))
       end
-    end)
-    pipe:write('{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{}}\n', function(write_err)
-      if write_err and not done then
+    end,
+    on_eof = function()
+      if buffer ~= "" then
+        handle_line(buffer)
+      else
         finish(nil)
       end
-    end)
-  end)
-  if ok_conn == nil then
-    finish(nil)
-  end
+    end,
+    on_error = function()
+      finish(nil)
+    end,
+  })
 
-  vim.wait(M._timeout or REQUEST_TIMEOUT_MS, function()
+  vim.wait(timeout + 100, function()
     return done
   end, 5)
-  if not done then
-    finish(nil)
-  end
+  stream:close()
   return terminals
 end
 
@@ -269,13 +339,14 @@ herdr-core framed paste transport.
 `terminal.send` always waits for quiet and submits with Enter, so pasting without
 submitting opens one framed connection per send:
 
-  connect -> plain `hello {framed:true}` -> wait reply line
-          -> framed ch0 `terminal.attach {terminal, cols, rows, resumed:true}` -> wait ch0 reply (gives ch)
-          -> framed ch DATA (payload) + ch CLOSE -> wait ch CLOSE ack -> close
+  connect -> plain `hello {framed:true}` -> wait reply line (`framed:true`)
+          -> framed ch0 `terminal.attach {terminal, cols:0, rows:0, resumed:true}`
+          -> wait ch0 reply matching id -> ch DATA (payload) + ch CLOSE
+          -> wait empty ch CLOSE ack -> close
 
-Requests are serialized one at a time on a queue, matching `herdr.lua`: the next
-connection opens only after the previous one completes or fails, so `submit()` never
-overtakes the `send()` text ahead of it.
+Passing 0x0 tells herdr-core to ignore our viewer size (`viewers.rs`), so a send
+never resizes the agent. Requests are serialized one at a time on a queue, matching
+`herdr.lua`, so `submit()` never overtakes the `send()` text ahead of it.
 ]]
 
 ---@param callback? fun(ok:boolean, error?:string)
@@ -296,11 +367,8 @@ local function close_connection(conn)
   if active == conn then
     active = nil
   end
-  if not conn.timer:is_closing() then
-    conn.timer:close()
-  end
-  if not conn.pipe:is_closing() then
-    conn.pipe:close()
+  if conn.stream then
+    conn.stream:close()
   end
 end
 
@@ -337,6 +405,16 @@ local function fail(conn, message)
   Util.error(message)
 end
 
+---@param payload string
+---@return string
+local function close_reason(payload)
+  local ok, info = pcall(vim.json.decode, payload)
+  if ok and type(info) == "table" and nonempty(info.reason) then
+    return info.reason
+  end
+  return payload
+end
+
 ---@param conn sidekick.hc.Connection
 local function process_frames(conn)
   while active == conn do
@@ -354,28 +432,29 @@ local function process_frames(conn)
         if not ok or type(reply) ~= "table" then
           return fail(conn, "hc returned an invalid attach response")
         end
-        if type(reply.error) == "table" then
-          local msg = ("hc attach failed: %s"):format(
-            nonempty(reply.error.message) or tostring(reply.error.code or "unknown error")
-          )
-          return finish_request(conn, false, msg)
-        end
-        local channel = type(reply.result) == "table" and reply.result.channel or nil
-        if type(channel) ~= "number" then
-          return fail(conn, "hc attach reply missing channel")
-        end
-        conn.channel = channel
-        conn.phase = "closing"
-        local frames = M.encode_frame(channel, FRAME_DATA, conn.request.data)
-          .. M.encode_frame(channel, FRAME_CLOSE, "")
-        conn.pipe:write(frames, function(write_err)
-          if write_err and active == conn then
-            fail(conn, "hc socket write failed: " .. write_err)
+        if reply.id == ATTACH_ID then
+          if type(reply.error) == "table" then
+            local msg = ("hc attach failed: %s"):format(
+              nonempty(reply.error.message) or tostring(reply.error.code or "unknown error")
+            )
+            return finish_request(conn, false, msg)
           end
-        end)
+          local channel = type(reply.result) == "table" and reply.result.channel or nil
+          if type(channel) ~= "number" then
+            return fail(conn, "hc attach reply missing channel")
+          end
+          conn.channel = channel
+          conn.phase = "closing"
+          local frames = M.encode_frame(channel, FRAME_DATA, conn.request.data)
+            .. M.encode_frame(channel, FRAME_CLOSE, "")
+          conn.stream:write(frames)
+        end
       end
     elseif conn.phase == "closing" then
       if ch == conn.channel and kind == FRAME_CLOSE then
+        if payload ~= "" then
+          return finish_request(conn, false, "hc terminal closed: " .. close_reason(payload))
+        end
         return finish_request(conn, true)
       end
     end
@@ -383,15 +462,10 @@ local function process_frames(conn)
 end
 
 ---@param conn sidekick.hc.Connection
-local function read(conn, err, data)
+---@param data string
+local function on_send_data(conn, data)
   if active ~= conn then
     return
-  end
-  if err then
-    return fail(conn, "hc socket read failed: " .. err)
-  end
-  if not data then
-    return fail(conn, "hc socket connection closed before completion")
   end
   conn.buffer = conn.buffer .. data
   if conn.phase == "hello" then
@@ -411,23 +485,22 @@ local function read(conn, err, data)
       )
       return fail(conn, msg)
     end
+    if type(reply.result) ~= "table" or reply.result.framed ~= true then
+      return fail(conn, "hc did not switch to framed mode")
+    end
     conn.phase = "attach"
     local attach = vim.json.encode({
       jsonrpc = "2.0",
-      id = 2,
+      id = ATTACH_ID,
       method = "terminal.attach",
       params = {
         terminal = conn.request.address,
-        cols = conn.request.cols,
-        rows = conn.request.rows,
+        cols = 0,
+        rows = 0,
         resumed = true,
       },
     })
-    conn.pipe:write(M.encode_frame(0, FRAME_DATA, attach), function(write_err)
-      if write_err and active == conn then
-        fail(conn, "hc socket write failed: " .. write_err)
-      end
-    end)
+    conn.stream:write(M.encode_frame(0, FRAME_DATA, attach))
   end
   if active == conn and conn.phase ~= "hello" then
     process_frames(conn)
@@ -445,48 +518,36 @@ function pump()
   local request = table.remove(queue, 1)
   local conn = {
     request = request,
-    pipe = assert(vim.uv.new_pipe(false)),
-    timer = assert(vim.uv.new_timer()),
     buffer = "",
     phase = "hello",
   } ---@type sidekick.hc.Connection
   active = conn
-  conn.timer:start(M._timeout or REQUEST_TIMEOUT_MS, 0, function()
-    if active == conn then
-      fail(conn, "hc request timed out")
-    end
-  end)
-  local ok_conn, conn_err = conn.pipe:connect(path, function(err)
-    if active ~= conn then
-      return
-    end
-    if err then
-      return fail(conn, "Could not connect to hc: " .. err)
-    end
-    conn.pipe:read_start(function(read_err, data)
-      read(conn, read_err, data)
-    end)
-    conn.pipe:write('{"jsonrpc":"2.0","id":1,"method":"hello","params":{"framed":true}}\n', function(write_err)
-      if write_err and active == conn then
-        fail(conn, "hc socket write failed: " .. write_err)
+  conn.stream = open_stream(path, {
+    timeout = M._timeout or REQUEST_TIMEOUT_MS,
+    initial = ('{"jsonrpc":"2.0","id":%d,"method":"hello","params":{"framed":true}}\n'):format(HELLO_ID),
+    on_data = function(_, data)
+      on_send_data(conn, data)
+    end,
+    on_eof = function()
+      if active == conn then
+        fail(conn, "hc socket connection closed before completion")
       end
-    end)
-  end)
-  if ok_conn == nil then
-    fail(conn, "Could not connect to hc: " .. tostring(conn_err))
-  end
+    end,
+    on_error = function(_, err)
+      if active == conn then
+        fail(conn, err)
+      end
+    end,
+  })
 end
 
 ---@param address string
 ---@param data string
----@param opts? { cols?: integer, rows?: integer, callback?: fun(ok:boolean, error?:string) }
+---@param opts? { callback?: fun(ok:boolean, error?:string) }
 function M.send_bytes(address, data, opts)
   opts = opts or {}
-  local size = sizes[address]
   queue[#queue + 1] = {
     address = address,
-    cols = opts.cols or (size and size.cols) or DEFAULT_COLS,
-    rows = opts.rows or (size and size.rows) or DEFAULT_ROWS,
     data = data,
     callback = opts.callback,
   }
@@ -511,17 +572,26 @@ end
 function M.sessions()
   local terminals = M.list()
   live = {}
-  sizes = {}
   context = {}
   if type(terminals) ~= "table" then
     return {}
+  end
+
+  local cached_tools ---@type { name: string, tool: sidekick.cli.Tool }[]?
+  local function get_tools()
+    if not cached_tools then
+      cached_tools = ordered_tools()
+    end
+    return cached_tools
   end
 
   local sessions = {} ---@type sidekick.cli.session.State[]
   for _, terminal in ipairs(terminals) do
     if type(terminal) == "table" and terminal.state == "live" then
       local address = nonempty(terminal.address)
-      if address then
+      -- Skip remote machines' terminals (`machine/t7`) so local project-scope
+      -- matching can never route to an agent on another host with the same path.
+      if address and not address:find("/", 1, true) then
         local labels = type(terminal.labels) == "table" and terminal.labels or {}
         local space = nonempty(labels["herdr.space"])
         local tab = nonempty(labels["herdr.tab"])
@@ -529,13 +599,7 @@ function M.sessions()
           context[address] = { space = space, tab = tab }
         end
 
-        local cols = type(terminal.cols) == "number" and terminal.cols > 0 and terminal.cols or nil
-        local rows = type(terminal.rows) == "number" and terminal.rows > 0 and terminal.rows or nil
-        if cols and rows then
-          sizes[address] = { cols = cols, rows = rows }
-        end
-
-        local tool = resolve_tool(terminal)
+        local tool = resolve_tool(terminal, get_tools)
         if tool then
           local fg = type(terminal.foreground) == "table" and terminal.foreground or {}
           local status = type(terminal.status) == "table" and terminal.status or nil
@@ -545,8 +609,6 @@ function M.sessions()
             cwd = nonempty(fg.cwd) or nonempty(terminal.cwd),
             external = true,
             hc_address = address,
-            hc_cols = cols,
-            hc_rows = rows,
             hc_space = space,
             hc_tab = tab,
             id = id,
@@ -576,12 +638,7 @@ function M:send(text, callback)
     Util.error("Session is missing hc terminal address")
     return
   end
-  local size = sizes[self.hc_address]
-  M.send_bytes(self.hc_address, bracketed_paste(text), {
-    cols = (size and size.cols) or self.hc_cols,
-    rows = (size and size.rows) or self.hc_rows,
-    callback = callback,
-  })
+  M.send_bytes(self.hc_address, bracketed_paste(text), { callback = callback })
 end
 
 ---@param callback? fun(ok:boolean, error?:string)
@@ -590,33 +647,7 @@ function M:submit(callback)
     Util.error("Session is missing hc terminal address")
     return
   end
-  local size = sizes[self.hc_address]
-  M.send_bytes(self.hc_address, "\r", {
-    cols = (size and size.cols) or self.hc_cols,
-    rows = (size and size.rows) or self.hc_rows,
-    callback = callback,
-  })
-end
-
-function M:dump()
-  if not self.hc_address then
-    return
-  end
-  local path = M.socket_path()
-  if not path then
-    return
-  end
-  local _, stdout = Util.exec({
-    "hc",
-    "read",
-    self.hc_address,
-    "--lines",
-    tostring(DUMP_LINES),
-  }, {
-    notify = false,
-    env = { HC_SOCKET = path },
-  })
-  return stdout
+  M.send_bytes(self.hc_address, "\r", { callback = callback })
 end
 
 ---@param session sidekick.cli.session.State
@@ -640,10 +671,10 @@ function M._reset()
     close_connection(active)
   end
   queue = {}
+  M._list_timeout = nil
   M._timeout = nil
   context = {}
   live = {}
-  sizes = {}
 end
 
 return M

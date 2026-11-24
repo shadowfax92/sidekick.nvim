@@ -39,6 +39,9 @@ local function terminal(overrides)
   if overrides and overrides.labels ~= nil then
     ret.labels = overrides.labels
   end
+  if overrides and overrides.foreground ~= nil then
+    ret.foreground = overrides.foreground
+  end
   return ret
 end
 
@@ -59,6 +62,7 @@ describe("hc sessions", function()
   local original_error
   local original_did_setup
   local original_backends
+  local original_tools
   local warnings
   local errors
 
@@ -73,6 +77,7 @@ describe("hc sessions", function()
     original_error = Util.error
     original_did_setup = Session.did_setup
     original_backends = Session.backends
+    original_tools = Config.tools
     warnings = {}
     errors = {}
     Util.warn = function(message)
@@ -92,6 +97,7 @@ describe("hc sessions", function()
     Util.error = original_error
     Session.did_setup = original_did_setup
     Session.backends = original_backends
+    Config.tools = original_tools
     for _, key in ipairs(env_keys) do
       vim.env[key] = original_env[key]
     end
@@ -146,8 +152,6 @@ describe("hc sessions", function()
         cwd = "/Users/shadowfax/proj",
         external = true,
         hc_address = "t3r",
-        hc_cols = 237,
-        hc_rows = 70,
         hc_space = "sp-main",
         hc_tab = "tb-6",
         id = "hc t3r",
@@ -166,8 +170,6 @@ describe("hc sessions", function()
         cwd = "/Users/shadowfax/proj",
         external = true,
         hc_address = "t4a",
-        hc_cols = 237,
-        hc_rows = 70,
         hc_space = "sp-main",
         hc_tab = "tb-6",
         id = "hc t4a",
@@ -176,7 +178,7 @@ describe("hc sessions", function()
       },
     },
     {
-      name = "live terminal without status matched by foreground argv is_proc",
+      name = "live terminal without status matched by foreground program name",
       entry = terminal({
         address = "t5b",
         status = vim.NIL,
@@ -192,8 +194,6 @@ describe("hc sessions", function()
         cwd = "/repo/codex",
         external = true,
         hc_address = "t5b",
-        hc_cols = 237,
-        hc_rows = 70,
         hc_space = "sp-2",
         hc_tab = "tb-2",
         id = "hc t5b",
@@ -202,7 +202,7 @@ describe("hc sessions", function()
       },
     },
     {
-      name = "live terminal with empty status.app falls back to foreground is_proc",
+      name = "live terminal with empty status.app falls back to foreground program name",
       entry = terminal({
         address = "t6c",
         status = { app = "", state = "working" },
@@ -218,12 +218,73 @@ describe("hc sessions", function()
         cwd = "/repo/fallback",
         external = true,
         hc_address = "t6c",
-        hc_cols = 237,
-        hc_rows = 70,
         id = "hc t6c",
         priority = 100,
         tool = "claude",
       },
+    },
+    {
+      name = "live terminal running gemini executable matches gemini",
+      entry = terminal({
+        address = "t6g",
+        status = vim.NIL,
+        foreground = {
+          argv = { "/opt/homebrew/bin/gemini", "--model", "pro" },
+          cwd = "/repo/app",
+          pid = 600,
+        },
+        labels = {},
+      }),
+      expected = {
+        cwd = "/repo/app",
+        external = true,
+        hc_address = "t6g",
+        id = "hc t6g",
+        priority = 100,
+        tool = "gemini",
+      },
+    },
+    {
+      name = "vim editing notes/gemini.md does not match gemini",
+      entry = terminal({
+        address = "t7v",
+        status = vim.NIL,
+        foreground = {
+          argv = { "/opt/homebrew/bin/vim", "notes/gemini.md" },
+          cwd = "/repo/app",
+          pid = 701,
+        },
+        labels = {},
+      }),
+      expected = nil,
+    },
+    {
+      name = "tool name in executable parent directory does not match",
+      entry = terminal({
+        address = "t7p",
+        status = vim.NIL,
+        foreground = {
+          argv = { "/Users/me/gemini/bin/vim", "README.md" },
+          cwd = "/repo/app",
+          pid = 702,
+        },
+        labels = {},
+      }),
+      expected = nil,
+    },
+    {
+      name = "copilot-language-server is filtered out",
+      entry = terminal({
+        address = "t7l",
+        status = vim.NIL,
+        foreground = {
+          argv = { "/usr/local/bin/copilot-language-server", "--stdio" },
+          cwd = "/repo/app",
+          pid = 703,
+        },
+        labels = {},
+      }),
+      expected = nil,
     },
     {
       name = "live plain shell is filtered out",
@@ -262,6 +323,20 @@ describe("hc sessions", function()
       }),
       expected = nil,
     },
+    {
+      name = "remote machine terminal address with slash is skipped",
+      entry = terminal({
+        address = "studio/t7",
+        cwd = "/Users/shadowfax",
+        foreground = {
+          argv = { "/Users/shadowfax/.local/bin/claude" },
+          cwd = "/Users/shadowfax",
+          pid = 999,
+        },
+        status = { app = "claude-code", state = "done" },
+      }),
+      expected = nil,
+    },
   }) do
     it("filters and maps terminal: " .. case.name, function()
       Hc.list = function()
@@ -278,6 +353,25 @@ describe("hc sessions", function()
     end)
   end
 
+  it("builds the tool list at most once per sessions() call", function()
+    local calls = 0
+    Config.tools = function()
+      calls = calls + 1
+      return original_tools()
+    end
+    Hc.list = function()
+      return {
+        terminal({ address = "t1", status = vim.NIL, foreground = { argv = { "fish" } } }),
+        terminal({ address = "t2", status = vim.NIL, foreground = { argv = { "vim", "notes/gemini.md" } } }),
+        terminal({ address = "t3", status = vim.NIL, foreground = { argv = { "/usr/local/bin/codex" } } }),
+      }
+    end
+    local sessions = Hc.sessions()
+    assert.are.equal(1, #sessions)
+    assert.are.equal("hc t3", sessions[1].id)
+    assert.are.equal(1, calls)
+  end)
+
   it("tracks is_running membership against the latest list", function()
     Hc.list = function()
       return { terminal({ address = "t3r" }) }
@@ -290,32 +384,6 @@ describe("hc sessions", function()
     end
     Hc.sessions()
     assert.is_false(session:is_running())
-  end)
-
-  it("reads terminal history with hc read using the resolved socket", function()
-    vim.env.HC_TERMINAL_SOCKET = "/tmp/hc-custom.sock"
-    local calls = {}
-    Util.exec = function(cmd, opts)
-      calls[#calls + 1] = { cmd = cmd, opts = opts }
-      return { "line 1", "line 2" }, "line 1\nline 2\n"
-    end
-
-    local session = setmetatable({ hc_address = "t3r" }, Hc)
-    assert.are.equal("line 1\nline 2\n", session:dump())
-    assert.are.same({
-      {
-        cmd = { "hc", "read", "t3r", "--lines", "1000" },
-        opts = { notify = false, env = { HC_SOCKET = "/tmp/hc-custom.sock" } },
-      },
-    }, calls)
-  end)
-
-  it("does not shell out to hc read when no socket env var is set", function()
-    Util.exec = function()
-      error("dump must not invoke hc without a socket")
-    end
-    local session = setmetatable({ hc_address = "t3r" }, Hc)
-    assert.is_nil(session:dump())
   end)
 
   for _, case in ipairs({
@@ -431,7 +499,7 @@ describe("hc socket transport", function()
   local errors
   local server
 
-  ---@param opts? {mode?: "normal"|"silent"|"close"|"attach_error", terminals?: table[], first_paint?: string}
+  ---@param opts? {mode?: "normal"|"silent"|"close"|"close_on_data"|"hello_error"|"hello_unframed"|"attach_error"|"close_reason", terminals?: table[], first_paint?: string, stray_ch0?: table}
   local function start_server(opts)
     opts = opts or {}
     local path = vim.fn.tempname() .. ".sock"
@@ -490,6 +558,24 @@ describe("hc socket transport", function()
             return
           end
           if req.method == "hello" then
+            if opts.mode == "hello_error" then
+              local reply = vim.json.encode({
+                jsonrpc = "2.0",
+                id = req.id,
+                error = { code = -32000, message = "unsupported_generation" },
+              }) .. "\n"
+              conn:write(reply)
+              return
+            end
+            if opts.mode == "hello_unframed" then
+              local reply = vim.json.encode({
+                jsonrpc = "2.0",
+                id = req.id,
+                result = { framed = false },
+              }) .. "\n"
+              conn:write(reply)
+              return
+            end
             local reply = vim.json.encode({
               jsonrpc = "2.0",
               id = req.id,
@@ -520,12 +606,16 @@ describe("hc socket transport", function()
               else
                 next_ch = next_ch + 1
                 attached[next_ch] = req.params.terminal
+                local out = ""
+                if opts.stray_ch0 then
+                  out = out .. Hc.encode_frame(0, FRAME_DATA, vim.json.encode(opts.stray_ch0))
+                end
                 local reply = vim.json.encode({
                   jsonrpc = "2.0",
                   id = req.id,
                   result = { channel = next_ch },
                 })
-                local out = Hc.encode_frame(0, FRAME_DATA, reply)
+                out = out .. Hc.encode_frame(0, FRAME_DATA, reply)
                 if opts.first_paint then
                   out = out .. Hc.encode_frame(next_ch, FRAME_DATA, opts.first_paint)
                 end
@@ -540,6 +630,10 @@ describe("hc socket transport", function()
               terminal = attached[ch],
               data = payload,
             }
+            if opts.mode == "close_on_data" then
+              conn:close()
+              return
+            end
           elseif kind == FRAME_CLOSE then
             srv.events[#srv.events + 1] = {
               connection = index,
@@ -547,7 +641,11 @@ describe("hc socket transport", function()
               channel = ch,
               terminal = attached[ch],
             }
-            conn:write(Hc.encode_frame(ch, FRAME_CLOSE, ""))
+            if opts.mode == "close_reason" and index == 1 then
+              conn:write(Hc.encode_frame(ch, FRAME_CLOSE, '{"reason":"exited"}'))
+            else
+              conn:write(Hc.encode_frame(ch, FRAME_CLOSE, ""))
+            end
           end
         end
       end)
@@ -593,22 +691,45 @@ describe("hc socket transport", function()
     end
   end)
 
-  it("lists terminals over the real socket", function()
-    server = start_server({ terminals = { terminal() } })
+  it("lists local terminals over the real socket and skips remote ones", function()
+    server = start_server({
+      terminals = {
+        terminal({ address = "t3r" }),
+        terminal({ address = "studio/t7" }),
+      },
+    })
     vim.env.HC_TERMINAL_SOCKET = server.path
 
     local sessions = Hc.sessions()
     assert.are.equal(1, #sessions)
     assert.are.equal("hc t3r", sessions[1].id)
     assert.are.equal("claude", sessions[1].tool)
-    assert.are.equal(237, sessions[1].hc_cols)
-    assert.are.equal(70, sessions[1].hc_rows)
   end)
 
-  it("serializes bracketed send then submit with current size and strips embedded paste end", function()
+  it("returns empty sessions promptly when the core socket is absent", function()
+    vim.env.HC_SOCKET = vim.fn.tempname() .. "/missing.sock"
+    local start = vim.uv.hrtime()
+    assert.are.same({}, Hc.sessions())
+    local elapsed_ms = (vim.uv.hrtime() - start) / 1e6
+    assert.is_true(elapsed_ms < 500)
+  end)
+
+  it("times out a silent core during listing without freezing Neovim", function()
+    server = start_server({ mode = "silent" })
+    vim.env.HC_SOCKET = server.path
+    Hc._list_timeout = 150
+    local start = vim.uv.hrtime()
+    assert.are.same({}, Hc.sessions())
+    local elapsed_ms = (vim.uv.hrtime() - start) / 1e6
+    assert.is_true(elapsed_ms < 1000)
+    assert.are.equal(1, server.connections)
+  end)
+
+  it("serializes bracketed send then submit at 0x0 size and matches attach reply by id", function()
     server = start_server({
       terminals = { terminal({ address = "t3r", cols = 237, rows = 70 }) },
       first_paint = "\27[2Jprompt> ",
+      stray_ch0 = { jsonrpc = "2.0", id = 999, result = { channel = 99 } },
     })
     vim.env.HC_TERMINAL_SOCKET = server.path
     local session = setmetatable(Hc.sessions()[1], Hc)
@@ -642,11 +763,81 @@ describe("hc socket transport", function()
     for _, ev in ipairs(attach_events) do
       assert.are.same({
         terminal = "t3r",
-        cols = 237,
-        rows = 70,
+        cols = 0,
+        rows = 0,
         resumed = true,
       }, ev.request.params)
     end
+  end)
+
+  for _, case in ipairs({
+    {
+      name = "close after hello",
+      mode = "close",
+      expected_err = "hc socket connection closed before completion",
+    },
+    {
+      name = "close mid-send after DATA",
+      mode = "close_on_data",
+      expected_err = "hc socket connection closed before completion",
+    },
+    {
+      name = "hello JSON-RPC error",
+      mode = "hello_error",
+      expected_err = "hc hello failed: unsupported_generation",
+    },
+    {
+      name = "hello without framed:true",
+      mode = "hello_unframed",
+      expected_err = "hc did not switch to framed mode",
+    },
+  }) do
+    it("fails and drops the queue without replay on " .. case.name, function()
+      server = start_server({ mode = case.mode })
+      vim.env.HC_SOCKET = server.path
+      local errs = {}
+      Hc.send_bytes("t3r", "a", {
+        callback = function(_, err)
+          errs[1] = err
+        end,
+      })
+      Hc.send_bytes("t3r", "\r", {
+        callback = function(_, err)
+          errs[2] = err
+        end,
+      })
+
+      assert.is_true(vim.wait(2000, function()
+        return errs[1] ~= nil and errs[2] ~= nil
+      end))
+      assert.are.equal(case.expected_err, errs[1])
+      assert.are.equal(errs[1], errs[2])
+      assert.are.same({ case.expected_err }, errors)
+      assert.are.equal(1, server.connections)
+    end)
+  end
+
+  it("treats CLOSE carrying a reason as failure and keeps serving queued targets", function()
+    server = start_server({ mode = "close_reason" })
+    vim.env.HC_SOCKET = server.path
+    local first_ok, first_err, second_ok
+    Hc.send_bytes("t-ended", "a", {
+      callback = function(ok, err)
+        first_ok, first_err = ok, err
+      end,
+    })
+    Hc.send_bytes("t3r", "b", {
+      callback = function(ok)
+        second_ok = ok
+      end,
+    })
+
+    assert.is_true(vim.wait(2000, function()
+      return first_ok ~= nil and second_ok == true
+    end))
+    assert.is_false(first_ok)
+    assert.are.equal("hc terminal closed: exited", first_err)
+    assert.are.same({}, errors)
   end)
 
   it("reports attach error and continues serving queued targets", function()
@@ -655,8 +846,6 @@ describe("hc socket transport", function()
     local second_ok
     Hc.send_bytes("t-gone", "a")
     Hc.send_bytes("t3r", "b", {
-      cols = 100,
-      rows = 40,
       callback = function(ok)
         second_ok = ok
       end,
