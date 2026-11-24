@@ -92,6 +92,24 @@ describe("opencode sessions", function()
       expected_ids = {},
     },
     {
+      name = "skips opencode --port N serve",
+      procs = {
+        [60308] = { pid = 60308, ppid = 57134, name = "opencode" },
+        [57134] = { pid = 57134, ppid = 1, name = "fish" },
+      },
+      args = { [60308] = "opencode --port 4096 serve" },
+      expected_ids = {},
+    },
+    {
+      name = "skips opencode with multiple value flags before serve",
+      procs = {
+        [60309] = { pid = 60309, ppid = 57134, name = "opencode" },
+        [57134] = { pid = 57134, ppid = 1, name = "fish" },
+      },
+      args = { [60309] = "/Users/shadowfax/.opencode/bin/opencode -p 4096 --hostname 127.0.0.1 serve --service" },
+      expected_ids = {},
+    },
+    {
       name = "ignores non-opencode listeners",
       procs = {
         [70001] = { pid = 70001, ppid = 1, name = "node" },

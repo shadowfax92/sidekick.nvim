@@ -28,9 +28,6 @@ local function is_background_server(pid, proc)
     if token == "serve" then
       return true
     end
-    if token:sub(1, 1) ~= "-" then
-      break
-    end
   end
   return false
 end
