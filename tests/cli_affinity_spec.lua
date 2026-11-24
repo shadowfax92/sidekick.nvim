@@ -119,6 +119,32 @@ describe("cli affinity", function()
     assert.are.equal(650, affinity.score)
   end)
 
+  it("scores hc space, tab, and parent terminal affinity", function()
+    Affinity.project = function(path)
+      return { cwd = path }
+    end
+
+    local affinity = Affinity.score({
+      cwd = "/repo/app",
+      hc_address = "t3r",
+      hc_space = "sp-1",
+      hc_tab = "tb-6",
+      project = { cwd = "/repo/app" },
+    }, {
+      backend = "hc",
+      cwd = "/repo/other",
+      hc_address = "t3r",
+      hc_space = "sp-1",
+      hc_tab = "tb-6",
+    })
+
+    assert.is_false(affinity.exact_cwd)
+    assert.is_true(affinity.same_tmux_session)
+    assert.is_true(affinity.same_tmux_window)
+    assert.is_true(affinity.same_tmux_pane)
+    assert.are.equal(175, affinity.score)
+  end)
+
   it("keeps both Herdr and tmux locations in the current scope", function()
     Config.cli.mux.backend = "herdr"
     Config.cli.mux.enabled = true
